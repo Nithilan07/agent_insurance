@@ -1,30 +1,29 @@
 """
-Document Quality Assessment Agent - Function-Based
+Document Quality Assessment Agent - Path-Based PDF Processing
 
 Evaluates document clarity, alignment, readability, and AI-generation likelihood.
-No classes - pure functions that accept parameters and return JSON.
+Uses convert_from_path for better PDF handling.
 
 Usage:
     # Analyze from file path
     result = assess_quality_from_file('document.pdf')
     
-    # Analyze from bytes
+    # Analyze from bytes (saves temp file for PDF)
     with open('scan.jpg', 'rb') as f:
         result = assess_quality_from_bytes(f.read(), 'scan.jpg')
-    
-    # Analyze from base64
-    result = assess_quality_from_base64(base64_string, 'report.pdf')
 """
 
 import io
+import os
 import base64
+import tempfile
 from pathlib import Path
 from typing import Union, Dict, List, Any, Optional
 from datetime import datetime
 import numpy as np
 import cv2
 import pytesseract
-from pdf2image import convert_from_bytes
+from pdf2image import convert_from_path  # Changed from convert_from_bytes
 from PIL import Image
 
 
@@ -32,7 +31,6 @@ from PIL import Image
 # CONFIGURATION
 # ============================================================================
 
-# Default thresholds and weights
 DEFAULT_CONFIG = {
     'clarity_threshold': 0.8,
     'alignment_weight': 0.25,
@@ -142,16 +140,7 @@ def aggregate_scores(page_results: List[Dict]) -> Dict[str, float]:
 
 
 def make_decision(scores: Dict[str, float], config: Dict = None) -> Dict[str, Any]:
-    """
-    Determine if document is readable and acceptable.
-    
-    Args:
-        scores: Dictionary of quality scores
-        config: Optional configuration with weights and threshold
-        
-    Returns:
-        Decision with weighted score and breakdown
-    """
+    """Determine if document is readable and acceptable."""
     if config is None:
         config = DEFAULT_CONFIG
     
@@ -206,10 +195,32 @@ def generate_recommendations(scores: Dict[str, float], weighted_score: float, th
 # FILE CONVERSION FUNCTIONS
 # ============================================================================
 
-def pdf_bytes_to_images(pdf_data: bytes) -> List[np.ndarray]:
-    """Convert PDF bytes to list of OpenCV images."""
-    pil_images = convert_from_bytes(pdf_data, dpi=200)
+def pdf_path_to_images(pdf_path: Union[str, Path]) -> List[np.ndarray]:
+    """Convert PDF file to list of OpenCV images using convert_from_path."""
+    pil_images = convert_from_path(pdf_path, dpi=200)
     return [cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR) for img in pil_images]
+
+
+def pdf_bytes_to_images(pdf_data: bytes, temp_suffix: str = '.pdf') -> List[np.ndarray]:
+    """
+    Convert PDF bytes to list of OpenCV images.
+    Creates a temporary file to use convert_from_path.
+    """
+    # Create temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=temp_suffix) as tmp_file:
+        tmp_file.write(pdf_data)
+        tmp_path = tmp_file.name
+    
+    try:
+        # Use convert_from_path on the temporary file
+        images = pdf_path_to_images(tmp_path)
+        return images
+    finally:
+        # Clean up temporary file
+        try:
+            os.unlink(tmp_path)
+        except:
+            pass
 
 
 def bytes_to_image(image_data: bytes) -> np.ndarray:
@@ -242,15 +253,67 @@ def assess_quality_from_file(file_path: Union[str, Path], config: Dict = None) -
             'timestamp': datetime.now().isoformat()
         }
     
-    with open(file_path, 'rb') as f:
-        file_data = f.read()
+    if config is None:
+        config = DEFAULT_CONFIG
     
-    return assess_quality_from_bytes(file_data, file_path.name, config)
+    try:
+        file_ext = file_path.suffix.lower()
+        
+        # Convert to images
+        if file_ext == '.pdf':
+            images = pdf_path_to_images(file_path)
+            doc_type = 'pdf'
+        elif file_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']:
+            with open(file_path, 'rb') as f:
+                images = [bytes_to_image(f.read())]
+            doc_type = 'image'
+        else:
+            return {
+                'success': False,
+                'error': f'Unsupported file type: {file_ext}',
+                'filename': file_path.name,
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # Evaluate all pages/images
+        page_results = []
+        for i, img in enumerate(images):
+            page_scores = evaluate_image(img)
+            page_results.append({
+                'page': i + 1,
+                'scores': page_scores
+            })
+        
+        # Calculate aggregate scores
+        agg_scores = aggregate_scores(page_results)
+        
+        # Make decision
+        decision_result = make_decision(agg_scores, config)
+        
+        return {
+            'success': True,
+            'filename': file_path.name,
+            'document_type': doc_type,
+            'total_pages': len(images),
+            'timestamp': datetime.now().isoformat(),
+            'aggregate_scores': agg_scores,
+            'decision': decision_result,
+            'page_details': page_results
+        }
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'filename': file_path.name,
+            'timestamp': datetime.now().isoformat()
+        }
 
 
 def assess_quality_from_bytes(file_data: bytes, filename: str, config: Dict = None) -> Dict[str, Any]:
     """
     Assess document quality from bytes.
+    For PDFs, creates a temporary file to use convert_from_path.
     
     Args:
         file_data: Raw file bytes
@@ -268,7 +331,7 @@ def assess_quality_from_bytes(file_data: bytes, filename: str, config: Dict = No
         
         # Convert to images
         if file_ext == '.pdf':
-            images = pdf_bytes_to_images(file_data)
+            images = pdf_bytes_to_images(file_data, temp_suffix=file_ext)
             doc_type = 'pdf'
         elif file_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']:
             images = [bytes_to_image(file_data)]
@@ -342,7 +405,7 @@ def assess_quality_from_base64(base64_data: str, filename: str, config: Dict = N
 
 def assess_image_array(image: np.ndarray, identifier: str = "image", config: Dict = None) -> Dict[str, Any]:
     """
-    Assess quality of a single image array (useful for integrating with other systems).
+    Assess quality of a single image array.
     
     Args:
         image: OpenCV image (BGR format)

@@ -175,15 +175,6 @@ def process_documents(
             }
             print(f"✗ {fname}: REJECTED due to error")
 
-    # Early exit if all documents rejected
-    if not doc_texts and rejected_docs:
-        return {
-            "status": "all_documents_rejected",
-            "quality_results": quality_results,
-            "rejected_documents": rejected_docs,
-            "message": "All documents failed quality assessment. Please upload clearer images.",
-            "diagnostics": diag
-        }
 
     # ------------------------------------------------------------
     # 1) CLASSIFICATION
