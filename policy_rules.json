@@ -1,0 +1,61 @@
+{
+    "mappings": [
+      {
+        "insurer_key": "STAR_HEALTH",
+        "insurer_name": "Star Health",
+        "patterns": ["^P/\\d{2}/", "^SH-"],
+        "default_plan": "Star-Default",
+        "features": {
+          "room_rent_limit_per_day": 3000,
+          "co_pay_percent": 0,
+          "covers_daycare": true,
+          "covers_maternity": false,
+          "diagnostics_sub_limit": null,
+          "notes": "Pattern-based match. Use radiology report, not actual scan image."
+        }
+      },
+      {
+        "insurer_key": "HDFC_ERGO",
+        "insurer_name": "HDFC ERGO",
+        "patterns": ["^4071", "^HE-"],
+        "default_plan": "HDFC-Default",
+        "features": {
+          "room_rent_limit_per_day": 5000,
+          "co_pay_percent": 5,
+          "covers_daycare": true,
+          "covers_maternity": false,
+          "diagnostics_sub_limit": 20000,
+          "notes": "Some plans have co-pay; confirm product with insurer."
+        }
+      },
+      {
+        "insurer_key": "ICICI_LOMBARD",
+        "insurer_name": "ICICI Lombard",
+        "patterns": ["^ICICI", "^IL-"],
+        "default_plan": "ICICI-Default",
+        "features": {
+          "room_rent_limit_per_day": 3500,
+          "co_pay_percent": 10,
+          "covers_daycare": true,
+          "covers_maternity": false,
+          "diagnostics_sub_limit": null,
+          "notes": "Pattern-based match; confirm plan name."
+        }
+      },
+      {
+        "insurer_key": "UNKNOWN",
+        "insurer_name": "Unknown",
+        "patterns": [],
+        "default_plan": "Unknown",
+        "features": {
+          "room_rent_limit_per_day": null,
+          "co_pay_percent": null,
+          "covers_daycare": null,
+          "covers_maternity": null,
+          "diagnostics_sub_limit": null,
+          "notes": "No match found. Ask insurer name or upload policy PDF."
+        }
+      }
+    ]
+  }
+  
