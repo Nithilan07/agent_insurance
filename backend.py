@@ -105,12 +105,17 @@ async def process_insurance_documents(
             if path and os.path.exists(path):
                 pdf_urls[key] = f"/download/{req_id}/{os.path.basename(path)}"
 
+        # Extract missing documents list from the structured response
+        missing_docs_result = result.get("missing_documents", {})
+        missing_docs_list = missing_docs_result.get("missing_docs", []) if isinstance(missing_docs_result, dict) else (missing_docs_result if isinstance(missing_docs_result, list) else [])
+        
         # Construct API response
         return JSONResponse({
             "request_id": req_id,
             "ocr_debug": ocr_debug,
             "classified_documents": result.get("classified"),
-            "missing_documents": result.get("missing_documents"),
+            "missing_documents": missing_docs_list,  # Return as array for UI compatibility
+            "missing_documents_full": missing_docs_result,  # Also include full structured data
             "coverage_result": result.get("coverage_result"),
             "report": result.get("report"),
             "diagnostics": result.get("diagnostics"),

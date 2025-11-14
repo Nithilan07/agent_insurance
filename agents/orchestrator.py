@@ -59,13 +59,25 @@ def process_documents(doc_texts: Dict[str, str], generate_pdfs: bool = False, ou
     classified = {}
     uploaded_types: List[str] = []
 
-    for fname, txt in doc_texts.items():
-        res = classify_document(txt, debug=True)
-        diag["classifier"] = True
+    try:
+        for fname, txt in doc_texts.items():
+            if not txt or not txt.strip():
+                classified[fname] = {"type": "unknown", "debug": {"error": "Empty text"}, "text": ""}
+                uploaded_types.append("unknown")
+                continue
+            
+            try:
+                res = classify_document(txt, debug=True)
+                diag["classifier"] = True
 
-        dtype = res.get("final_type", "unknown")
-        classified[fname] = {"type": dtype, "debug": res, "text": txt}
-        uploaded_types.append(dtype)
+                dtype = res.get("final_type", "unknown")
+                classified[fname] = {"type": dtype, "debug": res, "text": txt}
+                uploaded_types.append(dtype)
+            except Exception as e:
+                classified[fname] = {"type": "unknown", "debug": {"error": str(e)}, "text": txt}
+                uploaded_types.append("unknown")
+    except Exception as e:
+        diag["classifier"] = f"ERROR: {e}"
 
     uploaded_types = list(set(uploaded_types))
 
@@ -206,29 +218,71 @@ def process_documents(doc_texts: Dict[str, str], generate_pdfs: bool = False, ou
     # ------------------------------------------------------------
     # 6) MISSING DOCUMENTS AGENT
     # ------------------------------------------------------------
-    missing_result = determine_missing_documents(
-        uploaded_docs=uploaded_doc_types,
-        admission_info=full_bill_dict.get("admission_details", {}),
-        extracted_status_flags=full_bill_dict.get("document_status", {})
-    )
-    diag["missing_docs_agent"] = True
+    try:
+        missing_result = determine_missing_documents(
+            uploaded_docs=uploaded_doc_types,
+            admission_info=full_bill_dict.get("admission_details", {}),
+            extracted_status_flags=full_bill_dict.get("document_status", {})
+        )
+        diag["missing_docs_agent"] = True
+    except Exception as e:
+        diag["missing_docs_agent"] = f"ERROR: {e}"
+        missing_result = {
+            "required_docs": [],
+            "uploaded_docs": uploaded_doc_types,
+            "missing_docs": [],
+            "optional_docs": [],
+            "recommended_actions": [f"Error determining missing documents: {str(e)}"]
+        }
 
     # ------------------------------------------------------------
     # 7) COVERAGE AGENT
     # ------------------------------------------------------------
     try:
         fb_obj = FullBillData(**full_bill_dict)
-    except:
+    except Exception as e:
+        diag["coverage_agent"] = f"WARNING: Bill data validation error: {e}"
         fb_obj = FullBillData()
 
-    coverage_result = calculate_coverage(fb_obj, policy_lookup_info.get("features") or {})
-    diag["coverage_agent"] = True
+    try:
+        coverage_result = calculate_coverage(fb_obj, policy_lookup_info.get("features") or {})
+        diag["coverage_agent"] = True
+    except Exception as e:
+        diag["coverage_agent"] = f"ERROR: {e}"
+        coverage_result = {
+            "policy_features_used": {},
+            "totals": {
+                "total_bill_amount": 0,
+                "total_payable_before_copay": 0,
+                "co_pay_amount": 0,
+                "final_insurance_payable": 0,
+                "user_payable_estimate": 0,
+            },
+            "breakdown": {},
+            "reasons": [f"Error calculating coverage: {str(e)}"],
+            "recommended_actions": ["Please check your documents and try again."],
+            "verdict": "Error"
+        }
 
     # ------------------------------------------------------------
     # 8) REPORT AGENT
     # ------------------------------------------------------------
-    report = build_claim_readiness_report(full_bill_dict, coverage_result, policy_lookup_info)
-    diag["report_agent"] = True
+    try:
+        report = build_claim_readiness_report(full_bill_dict, coverage_result, policy_lookup_info)
+        diag["report_agent"] = True
+    except Exception as e:
+        diag["report_agent"] = f"ERROR: {e}"
+        report = {
+            "summary": {},
+            "financial_summary": {},
+            "breakdown": {},
+            "verdict": "Error",
+            "human_verdict": f"Error generating report: {str(e)}",
+            "reasons": [f"Report generation error: {str(e)}"],
+            "recommended_actions": ["Please try again or contact support."],
+            "missing_documents": [],
+            "policy_features_used": {}
+        }
 
     # ------------------------------------------------------------
     # 9) PDF GENERATION

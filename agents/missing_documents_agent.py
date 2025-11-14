@@ -131,17 +131,20 @@ def determine_missing_documents(
             "Maternity case — upload delivery notes and newborn records."
         )
 
-    # Identity + hospital legal docs
-    required.update(IDENTITY_DOCS)
-    required.update(HOSPITAL_LEGAL_DOCS)
+    # Identity + hospital legal docs (only if not already added)
+    if IDENTITY_DOCS:
+        required.update(IDENTITY_DOCS)
+        recommended.append("Identity proofs (Aadhaar / PAN) ensure insurer validation.")
 
-    recommended.append("Identity proofs (Aadhaar / PAN) ensure insurer validation.")
+    if HOSPITAL_LEGAL_DOCS:
+        required.update(HOSPITAL_LEGAL_DOCS)
 
-    # Pre & Post hospitalization bills
-    required.update(PRE_POST_REQUIRED)
-    recommended.append(
-        "Upload pre-hospitalization (30 days) and post-hospitalization (60 days) bills for full coverage."
-    )
+    # Pre & Post hospitalization bills (only if not already added)
+    if PRE_POST_REQUIRED:
+        required.update(PRE_POST_REQUIRED)
+        recommended.append(
+            "Upload pre-hospitalization (30 days) and post-hospitalization (60 days) bills for full coverage."
+        )
 
     # --------------------------------
     # Check missing docs

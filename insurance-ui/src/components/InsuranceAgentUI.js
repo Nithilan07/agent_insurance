@@ -186,6 +186,184 @@ export default function InsuranceAgentUI() {
         {/* Results Section */}
         {result && (
           <div className="results-section">
+            {/* Report Summary */}
+            {result.report && result.report.summary && (
+              <div className="card">
+                <div className="section-header">
+                  <div className="section-icon section-icon-blue">
+                    <FileText className="section-icon-svg" />
+                  </div>
+                  <h2 className="section-title">Claim Summary</h2>
+                </div>
+                
+                <div className="summary-grid">
+                  {result.report.summary.patient_name && (
+                    <div className="summary-item">
+                      <span className="summary-label">Patient Name:</span>
+                      <span className="summary-value">{result.report.summary.patient_name}</span>
+                    </div>
+                  )}
+                  {result.report.summary.policy_number && (
+                    <div className="summary-item">
+                      <span className="summary-label">Policy Number:</span>
+                      <span className="summary-value">{result.report.summary.policy_number}</span>
+                    </div>
+                  )}
+                  {result.report.summary.insurer_guess && (
+                    <div className="summary-item">
+                      <span className="summary-label">Insurer:</span>
+                      <span className="summary-value">{result.report.summary.insurer_guess}</span>
+                    </div>
+                  )}
+                  {result.report.summary.hospital && (
+                    <div className="summary-item">
+                      <span className="summary-label">Hospital:</span>
+                      <span className="summary-value">{result.report.summary.hospital}</span>
+                    </div>
+                  )}
+                  {result.report.summary.admission_date && (
+                    <div className="summary-item">
+                      <span className="summary-label">Admission Date:</span>
+                      <span className="summary-value">{result.report.summary.admission_date}</span>
+                    </div>
+                  )}
+                  {result.report.summary.discharge_date && (
+                    <div className="summary-item">
+                      <span className="summary-label">Discharge Date:</span>
+                      <span className="summary-value">{result.report.summary.discharge_date}</span>
+                    </div>
+                  )}
+                  {result.report.summary.diagnosis && (
+                    <div className="summary-item full-width">
+                      <span className="summary-label">Diagnosis:</span>
+                      <span className="summary-value">{result.report.summary.diagnosis}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Verdict */}
+            {result.report && result.report.verdict && (
+              <div className="card">
+                <div className="section-header">
+                  <div className={`section-icon ${
+                    result.report.verdict === "Eligible" 
+                      ? "section-icon-green" 
+                      : result.report.verdict.includes("Rejected") 
+                        ? "section-icon-red" 
+                        : "section-icon-orange"
+                  }`}>
+                    {result.report.verdict === "Eligible" ? (
+                      <CheckCircle className="section-icon-svg" />
+                    ) : (
+                      <AlertCircle className="section-icon-svg" />
+                    )}
+                  </div>
+                  <h2 className="section-title">Claim Status</h2>
+                </div>
+                
+                <div className={`verdict-box verdict-${result.report.verdict === "Eligible" ? "eligible" : "review"}`}>
+                  <div className="verdict-title">{result.report.verdict}</div>
+                  {result.report.human_verdict && (
+                    <div className="verdict-message">{result.report.human_verdict}</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Financial Summary */}
+            {result.report && result.report.financial_summary && (
+              <div className="card">
+                <div className="section-header">
+                  <div className="section-icon section-icon-blue">
+                    <FileText className="section-icon-svg" />
+                  </div>
+                  <h2 className="section-title">Financial Summary</h2>
+                </div>
+                
+                <div className="financial-grid">
+                  {result.report.financial_summary.total_bill_amount && (
+                    <div className="financial-item">
+                      <span className="financial-label">Total Bill Amount:</span>
+                      <span className="financial-value financial-total">
+                        ₹{Number(result.report.financial_summary.total_bill_amount).toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  )}
+                  {result.report.financial_summary.total_payable_before_copay && (
+                    <div className="financial-item">
+                      <span className="financial-label">Payable Before Co-pay:</span>
+                      <span className="financial-value">
+                        ₹{Number(result.report.financial_summary.total_payable_before_copay).toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  )}
+                  {result.report.financial_summary.co_pay_amount && (
+                    <div className="financial-item">
+                      <span className="financial-label">Co-pay Amount:</span>
+                      <span className="financial-value financial-copay">
+                        ₹{Number(result.report.financial_summary.co_pay_amount).toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  )}
+                  {result.report.financial_summary.final_insurance_payable && (
+                    <div className="financial-item highlight">
+                      <span className="financial-label">Insurance Payable:</span>
+                      <span className="financial-value financial-insurance">
+                        ₹{Number(result.report.financial_summary.final_insurance_payable).toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  )}
+                  {result.report.financial_summary.user_payable_estimate && (
+                    <div className="financial-item">
+                      <span className="financial-label">Your Estimated Share:</span>
+                      <span className="financial-value financial-user">
+                        ₹{Number(result.report.financial_summary.user_payable_estimate).toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Coverage Breakdown */}
+            {result.coverage_result && result.coverage_result.breakdown && (
+              <div className="card">
+                <div className="section-header">
+                  <div className="section-icon section-icon-blue">
+                    <FileText className="section-icon-svg" />
+                  </div>
+                  <h2 className="section-title">Coverage Breakdown</h2>
+                </div>
+                
+                <div className="breakdown-table">
+                  <div className="breakdown-header">
+                    <div className="breakdown-col">Category</div>
+                    <div className="breakdown-col">Charged</div>
+                    <div className="breakdown-col">Allowed</div>
+                    <div className="breakdown-col">Not Allowed</div>
+                  </div>
+                  {Object.entries(result.coverage_result.breakdown).map(([key, value]) => (
+                    <div key={key} className="breakdown-row">
+                      <div className="breakdown-col breakdown-category">
+                        {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                      </div>
+                      <div className="breakdown-col">
+                        ₹{Number(value.charged || 0).toLocaleString('en-IN')}
+                      </div>
+                      <div className="breakdown-col breakdown-allowed">
+                        ₹{Number(value.allowed || 0).toLocaleString('en-IN')}
+                      </div>
+                      <div className={`breakdown-col ${value.not_allowed > 0 ? 'breakdown-not-allowed' : ''}`}>
+                        ₹{Number(value.not_allowed || 0).toLocaleString('en-IN')}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Missing Documents */}
             <div className="card">
               <div className="section-header">
@@ -196,13 +374,25 @@ export default function InsuranceAgentUI() {
               </div>
               
               {result.missing_documents && result.missing_documents.length > 0 ? (
-                <div className="doc-list">
-                  {result.missing_documents.map((doc, index) => (
-                    <div key={index} className="doc-item doc-item-missing">
-                      <XCircle className="doc-icon" />
-                      <span className="doc-text">{doc}</span>
+                <div>
+                  <div className="doc-list">
+                    {result.missing_documents.map((doc, index) => (
+                      <div key={index} className="doc-item doc-item-missing">
+                        <XCircle className="doc-icon" />
+                        <span className="doc-text">{doc.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {result.missing_documents_full && result.missing_documents_full.recommended_actions && (
+                    <div className="recommendations-box">
+                      <h4 className="recommendations-title">Recommendations:</h4>
+                      <ul className="recommendations-list">
+                        {result.missing_documents_full.recommended_actions.map((action, idx) => (
+                          <li key={idx}>{action}</li>
+                        ))}
+                      </ul>
                     </div>
-                  ))}
+                  )}
                 </div>
               ) : (
                 <div className="success-message">
@@ -214,21 +404,72 @@ export default function InsuranceAgentUI() {
               )}
             </div>
 
-            {/* Coverage Result */}
-            <div className="card">
-              <div className="section-header">
-                <div className="section-icon section-icon-blue">
-                  <CheckCircle className="section-icon-svg" />
+            {/* Reasons & Recommendations */}
+            {result.report && (
+              <div className="card">
+                <div className="section-header">
+                  <div className="section-icon section-icon-blue">
+                    <AlertCircle className="section-icon-svg" />
+                  </div>
+                  <h2 className="section-title">Important Notes</h2>
                 </div>
-                <h2 className="section-title">Coverage Analysis</h2>
+                
+                {result.report.reasons && result.report.reasons.length > 0 && (
+                  <div className="notes-section">
+                    <h4 className="notes-title">Reasons:</h4>
+                    <ul className="notes-list">
+                      {result.report.reasons.map((reason, idx) => (
+                        <li key={idx} className="note-item note-reason">{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                {result.report.recommended_actions && result.report.recommended_actions.length > 0 && (
+                  <div className="notes-section">
+                    <h4 className="notes-title">Recommended Actions:</h4>
+                    <ul className="notes-list">
+                      {result.report.recommended_actions.map((action, idx) => (
+                        <li key={idx} className="note-item note-action">{action}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
-              
-              <div className="code-block">
-                <pre className="code-pre">
-                  {JSON.stringify(result.coverage_result, null, 2)}
-                </pre>
+            )}
+
+            {/* Classified Documents */}
+            {result.classified_documents && Object.keys(result.classified_documents).length > 0 && (
+              <div className="card">
+                <div className="section-header">
+                  <div className="section-icon section-icon-green">
+                    <File className="section-icon-svg" />
+                  </div>
+                  <h2 className="section-title">Uploaded Documents</h2>
+                </div>
+                
+                <div className="classified-list">
+                  {Object.entries(result.classified_documents).map(([filename, data]) => (
+                    <div key={filename} className="classified-item">
+                      <div className="classified-file">
+                        <File className="classified-icon" />
+                        <span className="classified-filename">{filename}</span>
+                      </div>
+                      <div className="classified-type">
+                        <span className="type-badge">
+                          {data.type ? data.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'Unknown'}
+                        </span>
+                        {data.debug && data.debug.confidence && (
+                          <span className="confidence-badge">
+                            {(data.debug.confidence * 100).toFixed(0)}% confidence
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Generated PDFs */}
             {result.generated_pdfs && Object.keys(result.generated_pdfs).length > 0 && (
@@ -251,7 +492,7 @@ export default function InsuranceAgentUI() {
                     >
                       <div className="pdf-info">
                         <FileText className="pdf-icon" />
-                        <span className="pdf-name">{name}</span>
+                        <span className="pdf-name">{name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
                       </div>
                       <Download className="download-icon" />
                     </a>
@@ -574,10 +815,314 @@ export default function InsuranceAgentUI() {
           color: #059669;
         }
 
+        .section-icon-red {
+          background: #fee2e2;
+        }
+
+        .section-icon-red .section-icon-svg {
+          color: #dc2626;
+        }
+
         .section-title {
           font-size: 1.5rem;
           font-weight: 700;
           color: #111827;
+        }
+
+        /* Summary Grid */
+        .summary-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+          gap: 1rem;
+        }
+
+        .summary-item {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+
+        .summary-item.full-width {
+          grid-column: 1 / -1;
+        }
+
+        .summary-label {
+          font-size: 0.875rem;
+          font-weight: 600;
+          color: #6b7280;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        .summary-value {
+          font-size: 1rem;
+          font-weight: 500;
+          color: #111827;
+        }
+
+        /* Verdict Box */
+        .verdict-box {
+          padding: 1.5rem;
+          border-radius: 12px;
+          text-align: center;
+        }
+
+        .verdict-eligible {
+          background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+          border: 2px solid #10b981;
+        }
+
+        .verdict-review {
+          background: linear-gradient(135deg, #ffedd5 0%, #fed7aa 100%);
+          border: 2px solid #f59e0b;
+        }
+
+        .verdict-title {
+          font-size: 1.5rem;
+          font-weight: 700;
+          color: #111827;
+          margin-bottom: 0.5rem;
+        }
+
+        .verdict-message {
+          font-size: 1rem;
+          color: #374151;
+        }
+
+        /* Financial Grid */
+        .financial-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 1rem;
+        }
+
+        .financial-item {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+          padding: 1rem;
+          background: #f9fafb;
+          border-radius: 8px;
+          border: 1px solid #e5e7eb;
+        }
+
+        .financial-item.highlight {
+          background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+          border-color: #3b82f6;
+        }
+
+        .financial-label {
+          font-size: 0.875rem;
+          font-weight: 600;
+          color: #6b7280;
+        }
+
+        .financial-value {
+          font-size: 1.25rem;
+          font-weight: 700;
+          color: #111827;
+        }
+
+        .financial-total {
+          color: #1f2937;
+        }
+
+        .financial-insurance {
+          color: #2563eb;
+        }
+
+        .financial-copay {
+          color: #f59e0b;
+        }
+
+        .financial-user {
+          color: #dc2626;
+        }
+
+        /* Breakdown Table */
+        .breakdown-table {
+          overflow-x: auto;
+        }
+
+        .breakdown-header,
+        .breakdown-row {
+          display: grid;
+          grid-template-columns: 2fr 1fr 1fr 1fr;
+          gap: 1rem;
+          padding: 0.75rem 1rem;
+          border-bottom: 1px solid #e5e7eb;
+        }
+
+        .breakdown-header {
+          background: #f9fafb;
+          font-weight: 600;
+          color: #374151;
+          border-bottom: 2px solid #d1d5db;
+        }
+
+        .breakdown-row:hover {
+          background: #f9fafb;
+        }
+
+        .breakdown-col {
+          font-size: 0.875rem;
+          color: #374151;
+        }
+
+        .breakdown-category {
+          font-weight: 500;
+          color: #111827;
+        }
+
+        .breakdown-allowed {
+          color: #059669;
+          font-weight: 600;
+        }
+
+        .breakdown-not-allowed {
+          color: #dc2626;
+          font-weight: 600;
+        }
+
+        /* Recommendations Box */
+        .recommendations-box {
+          margin-top: 1.5rem;
+          padding: 1rem;
+          background: #fef3c7;
+          border: 1px solid #fcd34d;
+          border-radius: 8px;
+        }
+
+        .recommendations-title {
+          font-size: 1rem;
+          font-weight: 600;
+          color: #92400e;
+          margin-bottom: 0.75rem;
+        }
+
+        .recommendations-list {
+          list-style: none;
+          padding: 0;
+          margin: 0;
+        }
+
+        .recommendations-list li {
+          padding: 0.5rem 0;
+          padding-left: 1.5rem;
+          position: relative;
+          color: #78350f;
+          font-size: 0.875rem;
+        }
+
+        .recommendations-list li:before {
+          content: "→";
+          position: absolute;
+          left: 0;
+          color: #f59e0b;
+          font-weight: bold;
+        }
+
+        /* Notes Section */
+        .notes-section {
+          margin-bottom: 1.5rem;
+        }
+
+        .notes-section:last-child {
+          margin-bottom: 0;
+        }
+
+        .notes-title {
+          font-size: 1rem;
+          font-weight: 600;
+          color: #374151;
+          margin-bottom: 0.75rem;
+        }
+
+        .notes-list {
+          list-style: none;
+          padding: 0;
+          margin: 0;
+        }
+
+        .note-item {
+          padding: 0.75rem 1rem;
+          margin-bottom: 0.5rem;
+          border-radius: 8px;
+          font-size: 0.875rem;
+          line-height: 1.5;
+        }
+
+        .note-reason {
+          background: #fef2f2;
+          border-left: 4px solid #ef4444;
+          color: #991b1b;
+        }
+
+        .note-action {
+          background: #eff6ff;
+          border-left: 4px solid #3b82f6;
+          color: #1e40af;
+        }
+
+        /* Classified Documents */
+        .classified-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .classified-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 1rem;
+          background: #f9fafb;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+        }
+
+        .classified-file {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          flex: 1;
+        }
+
+        .classified-icon {
+          width: 20px;
+          height: 20px;
+          color: #6b7280;
+        }
+
+        .classified-filename {
+          font-size: 0.875rem;
+          font-weight: 500;
+          color: #374151;
+        }
+
+        .classified-type {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
+        .type-badge {
+          padding: 0.25rem 0.75rem;
+          border-radius: 12px;
+          font-size: 0.75rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          background: #dbeafe;
+          color: #1e40af;
+        }
+
+        .confidence-badge {
+          padding: 0.25rem 0.75rem;
+          border-radius: 12px;
+          font-size: 0.75rem;
+          font-weight: 500;
+          background: #f3f4f6;
+          color: #6b7280;
         }
 
         /* Missing Documents */
