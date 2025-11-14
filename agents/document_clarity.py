@@ -1,16 +1,19 @@
 """
-Document Quality Assessment Agent - Path-Based PDF Processing
+Document Quality Assessment Agent - Optimized for Backend Integration
 
 Evaluates document clarity, alignment, readability, and AI-generation likelihood.
-Uses convert_from_path for better PDF handling.
+Uses convert_from_path for better PDF handling with automatic temp file management.
 
 Usage:
     # Analyze from file path
     result = assess_quality_from_file('document.pdf')
     
-    # Analyze from bytes (saves temp file for PDF)
+    # Analyze from bytes (automatically handles temp files)
     with open('scan.jpg', 'rb') as f:
         result = assess_quality_from_bytes(f.read(), 'scan.jpg')
+    
+    # Analyze from base64
+    result = assess_quality_from_base64(base64_string, 'document.pdf')
 """
 
 import io
@@ -18,12 +21,12 @@ import os
 import base64
 import tempfile
 from pathlib import Path
-from typing import Union, Dict, List, Any, Optional
+from typing import Tuple, Union, Dict, List, Any, Optional
 from datetime import datetime
 import numpy as np
 import cv2
 import pytesseract
-from pdf2image import convert_from_path  # Changed from convert_from_bytes
+from pdf2image import convert_from_path
 from PIL import Image
 
 
@@ -32,7 +35,7 @@ from PIL import Image
 # ============================================================================
 
 DEFAULT_CONFIG = {
-    'clarity_threshold': 0.8,
+    'clarity_threshold': 0.70,
     'alignment_weight': 0.25,
     'clarity_weight': 0.40,
     'readability_weight': 0.35,
@@ -46,32 +49,40 @@ DEFAULT_CONFIG = {
 
 def alignment_score(image: np.ndarray) -> float:
     """Measures skew or tilt in the document."""
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-    lines = cv2.HoughLines(edges, 1, np.pi / 180, 200)
-    
-    if lines is None:
-        return 1.0
-    
-    angles = [(theta - np.pi / 2) * 180 / np.pi for rho, theta in lines[:, 0]]
-    median_angle = np.median(angles)
-    score = max(0, 1 - abs(median_angle) / 15)
-    return float(min(1, score))
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+        lines = cv2.HoughLines(edges, 1, np.pi / 180, 200)
+        
+        if lines is None:
+            return 1.0
+        
+        angles = [(theta - np.pi / 2) * 180 / np.pi for rho, theta in lines[:, 0]]
+        median_angle = np.median(angles)
+        score = max(0, 1 - abs(median_angle) / 15)
+        return float(min(1, score))
+    except Exception as e:
+        print(f"  Warning: Alignment score calculation failed: {str(e)}")
+        return 0.5  # Return neutral score on error
 
 
 def clarity_score(image: np.ndarray) -> float:
     """Measures blurriness using Laplacian variance."""
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    fm = cv2.Laplacian(gray, cv2.CV_64F).var()
-    return float(min(fm / 500.0, 1.0))
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        fm = cv2.Laplacian(gray, cv2.CV_64F).var()
+        return float(min(fm / 500.0, 1.0))
+    except Exception as e:
+        print(f"  Warning: Clarity score calculation failed: {str(e)}")
+        return 0.5
 
 
 def readability_score(image: np.ndarray) -> float:
     """Measures OCR text box detection ratio."""
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    gray = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-    
     try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+        
         data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
         text_boxes = sum([1 for conf in data['conf'] if conf != '-1'])
         total_boxes = len(data['conf'])
@@ -80,34 +91,39 @@ def readability_score(image: np.ndarray) -> float:
             return 0.0
         
         return float(text_boxes / total_boxes)
-    except Exception:
-        return 0.0
+    except Exception as e:
+        print(f"  Warning: Readability score calculation failed: {str(e)}")
+        return 0.5
 
 
 def ai_generated_probability(image: np.ndarray) -> float:
     """Estimate chance that document is AI-generated."""
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Entropy-based smoothness score
-    hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
-    hist = hist.flatten() / hist.sum()
-    entropy = -np.sum(hist * np.log2(hist + 1e-10))
-    smoothness_score = 1 - (entropy / 8.0)
-    
-    # Frequency domain analysis
-    f_transform = np.fft.fft2(gray)
-    f_shift = np.fft.fftshift(f_transform)
-    magnitude = np.abs(f_shift)
-    
-    rows, cols = gray.shape
-    crow, ccol = rows // 2, cols // 2
-    high_freq_region = magnitude.copy()
-    high_freq_region[crow-30:crow+30, ccol-30:ccol+30] = 0
-    high_freq_energy = np.sum(high_freq_region) / magnitude.size
-    high_freq_score = 1 - min(high_freq_energy / 1000, 1.0)
-    
-    ai_prob = (0.5 * smoothness_score + 0.5 * high_freq_score) * 0.5
-    return float(np.clip(ai_prob, 0, 1))
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Entropy-based smoothness score
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        hist = hist.flatten() / hist.sum()
+        entropy = -np.sum(hist * np.log2(hist + 1e-10))
+        smoothness_score = 1 - (entropy / 8.0)
+        
+        # Frequency domain analysis
+        f_transform = np.fft.fft2(gray)
+        f_shift = np.fft.fftshift(f_transform)
+        magnitude = np.abs(f_shift)
+        
+        rows, cols = gray.shape
+        crow, ccol = rows // 2, cols // 2
+        high_freq_region = magnitude.copy()
+        high_freq_region[crow-30:crow+30, ccol-30:ccol+30] = 0
+        high_freq_energy = np.sum(high_freq_region) / magnitude.size
+        high_freq_score = 1 - min(high_freq_energy / 1000, 1.0)
+        
+        ai_prob = (0.5 * smoothness_score + 0.5 * high_freq_score) * 0.5
+        return float(np.clip(ai_prob, 0, 1))
+    except Exception as e:
+        print(f"  Warning: AI probability calculation failed: {str(e)}")
+        return 0.3  # Return low AI probability on error
 
 
 def evaluate_image(image: np.ndarray) -> Dict[str, float]:
@@ -172,19 +188,20 @@ def generate_recommendations(scores: Dict[str, float], weighted_score: float, th
     recommendations = []
     
     if scores['clarity'] < 0.5:
-        recommendations.append("⚠ Low clarity - document may be blurry or low resolution")
+        recommendations.append("⚠️ Low clarity - document may be blurry or low resolution")
     
     if scores['alignment'] < 0.5:
-        recommendations.append("⚠ Poor alignment - document may be skewed or tilted")
+        recommendations.append("⚠️ Poor alignment - document may be skewed or tilted")
     
     if scores['readability'] < 0.5:
-        recommendations.append("⚠ Low readability - OCR detection is poor")
+        recommendations.append("⚠️ Low readability - OCR detection is poor")
     
     if scores['ai_generated'] > 0.6:
-        recommendations.append("ℹ Document shows characteristics of AI generation")
+        recommendations.append("ℹ️ Document shows characteristics of AI generation")
     
     if weighted_score <= threshold:
         recommendations.append("❌ Document does not meet quality standards for processing")
+        recommendations.append("   Please upload a clearer scan or higher quality image")
     else:
         recommendations.append("✅ Document meets quality standards")
     
@@ -195,51 +212,64 @@ def generate_recommendations(scores: Dict[str, float], weighted_score: float, th
 # FILE CONVERSION FUNCTIONS
 # ============================================================================
 
-def pdf_path_to_images(pdf_path: Union[str, Path]) -> List[np.ndarray]:
+def pdf_path_to_images(pdf_path: Union[str, Path], dpi: int = 200) -> List[np.ndarray]:
     """Convert PDF file to list of OpenCV images using convert_from_path."""
-    pil_images = convert_from_path(pdf_path, dpi=200)
-    return [cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR) for img in pil_images]
+    try:
+        pil_images = convert_from_path(pdf_path, dpi=dpi)
+        return [cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR) for img in pil_images]
+    except Exception as e:
+        raise ValueError(f"Failed to convert PDF to images: {str(e)}")
 
 
-def pdf_bytes_to_images(pdf_data: bytes, temp_suffix: str = '.pdf') -> List[np.ndarray]:
+def pdf_bytes_to_images(pdf_data: bytes, temp_suffix: str = '.pdf', dpi: int = 200) -> List[np.ndarray]:
     """
     Convert PDF bytes to list of OpenCV images.
-    Creates a temporary file to use convert_from_path.
+    Creates a temporary file to use convert_from_path, then cleans up.
     """
-    # Create temporary file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=temp_suffix) as tmp_file:
-        tmp_file.write(pdf_data)
-        tmp_path = tmp_file.name
-    
+    tmp_path = None
     try:
-        # Use convert_from_path on the temporary file
-        images = pdf_path_to_images(tmp_path)
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=temp_suffix) as tmp_file:
+            tmp_file.write(pdf_data)
+            tmp_path = tmp_file.name
+        
+        # Convert using path-based method
+        images = pdf_path_to_images(tmp_path, dpi=dpi)
         return images
+        
+    except Exception as e:
+        raise ValueError(f"Failed to convert PDF bytes to images: {str(e)}")
+        
     finally:
-        # Clean up temporary file
-        try:
-            os.unlink(tmp_path)
-        except:
-            pass
+        # Always clean up temporary file
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception as cleanup_error:
+                print(f"  Warning: Failed to cleanup temp file {tmp_path}: {str(cleanup_error)}")
 
 
 def bytes_to_image(image_data: bytes) -> np.ndarray:
     """Convert image bytes to OpenCV image."""
-    image = Image.open(io.BytesIO(image_data))
-    return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    try:
+        image = Image.open(io.BytesIO(image_data))
+        return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    except Exception as e:
+        raise ValueError(f"Failed to convert image bytes: {str(e)}")
 
 
 # ============================================================================
 # MAIN ASSESSMENT FUNCTIONS
 # ============================================================================
 
-def assess_quality_from_file(file_path: Union[str, Path], config: Dict = None) -> Dict[str, Any]:
+def assess_quality_from_file(file_path: Union[str, Path], config: Dict = None, verbose: bool = True) -> Dict[str, Any]:
     """
     Assess document quality from file path.
     
     Args:
         file_path: Path to the document
         config: Optional configuration dict
+        verbose: Print detailed progress
         
     Returns:
         JSON-serializable dict with quality analysis
@@ -278,6 +308,9 @@ def assess_quality_from_file(file_path: Union[str, Path], config: Dict = None) -
         # Evaluate all pages/images
         page_results = []
         for i, img in enumerate(images):
+            if verbose:
+                print(f"  → Processing page {i+1}/{len(images)}...")
+            
             page_scores = evaluate_image(img)
             page_results.append({
                 'page': i + 1,
@@ -286,6 +319,9 @@ def assess_quality_from_file(file_path: Union[str, Path], config: Dict = None) -
         
         # Calculate aggregate scores
         agg_scores = aggregate_scores(page_results)
+        
+        if verbose:
+            print(f"  → Aggregate scores calculated")
         
         # Make decision
         decision_result = make_decision(agg_scores, config)
@@ -310,15 +346,21 @@ def assess_quality_from_file(file_path: Union[str, Path], config: Dict = None) -
         }
 
 
-def assess_quality_from_bytes(file_data: bytes, filename: str, config: Dict = None) -> Dict[str, Any]:
+def assess_quality_from_bytes(
+    file_data: bytes, 
+    filename: str, 
+    config: Dict = None,
+    verbose: bool = True
+) -> Dict[str, Any]:
     """
     Assess document quality from bytes.
     For PDFs, creates a temporary file to use convert_from_path.
     
     Args:
         file_data: Raw file bytes
-        filename: Original filename
+        filename: Original filename (used to determine file type)
         config: Optional configuration dict
+        verbose: Print detailed progress
         
     Returns:
         JSON-serializable dict with quality analysis
@@ -328,6 +370,9 @@ def assess_quality_from_bytes(file_data: bytes, filename: str, config: Dict = No
     
     try:
         file_ext = Path(filename).suffix.lower()
+        
+        if verbose:
+            print(f"  → Processing {filename} ({len(file_data)} bytes)")
         
         # Convert to images
         if file_ext == '.pdf':
@@ -347,6 +392,9 @@ def assess_quality_from_bytes(file_data: bytes, filename: str, config: Dict = No
         # Evaluate all pages/images
         page_results = []
         for i, img in enumerate(images):
+            if verbose:
+                print(f"  → Analyzing page {i+1}/{len(images)}...")
+            
             page_scores = evaluate_image(img)
             page_results.append({
                 'page': i + 1,
@@ -379,7 +427,12 @@ def assess_quality_from_bytes(file_data: bytes, filename: str, config: Dict = No
         }
 
 
-def assess_quality_from_base64(base64_data: str, filename: str, config: Dict = None) -> Dict[str, Any]:
+def assess_quality_from_base64(
+    base64_data: str, 
+    filename: str, 
+    config: Dict = None,
+    verbose: bool = True
+) -> Dict[str, Any]:
     """
     Assess document quality from base64 string.
     
@@ -387,13 +440,14 @@ def assess_quality_from_base64(base64_data: str, filename: str, config: Dict = N
         base64_data: Base64 encoded file data
         filename: Original filename
         config: Optional configuration dict
+        verbose: Print detailed progress
         
     Returns:
         JSON-serializable dict with quality analysis
     """
     try:
         file_data = base64.b64decode(base64_data)
-        return assess_quality_from_bytes(file_data, filename, config)
+        return assess_quality_from_bytes(file_data, filename, config, verbose)
     except Exception as e:
         return {
             'success': False,
@@ -403,7 +457,11 @@ def assess_quality_from_base64(base64_data: str, filename: str, config: Dict = N
         }
 
 
-def assess_image_array(image: np.ndarray, identifier: str = "image", config: Dict = None) -> Dict[str, Any]:
+def assess_image_array(
+    image: np.ndarray, 
+    identifier: str = "image", 
+    config: Dict = None
+) -> Dict[str, Any]:
     """
     Assess quality of a single image array.
     
@@ -441,9 +499,69 @@ def assess_image_array(image: np.ndarray, identifier: str = "image", config: Dic
 
 
 # ============================================================================
-# CONVENIENCE FUNCTION
+# CONVENIENCE FUNCTIONS
 # ============================================================================
 
-def quick_assess(file_path: str) -> Dict[str, Any]:
+def quick_assess(file_path: str, config: Dict = None) -> Dict[str, Any]:
     """Quick assessment of a document - convenience function."""
-    return assess_quality_from_file(file_path)
+    return assess_quality_from_file(file_path, config=config)
+
+
+def validate_document_bytes(
+    file_data: bytes, 
+    filename: str,
+    min_threshold: float = 0.70
+) -> Tuple[bool, Dict[str, Any]]:
+    """
+    Validate document quality and return pass/fail with full results.
+    
+    Args:
+        file_data: Raw file bytes
+        filename: Original filename
+        min_threshold: Minimum quality threshold
+        
+    Returns:
+        Tuple of (is_acceptable, full_results)
+    """
+    config = DEFAULT_CONFIG.copy()
+    config['clarity_threshold'] = min_threshold
+    
+    result = assess_quality_from_bytes(file_data, filename, config=config, verbose=False)
+    
+    if not result.get('success'):
+        return False, result
+    
+    is_acceptable = result.get('decision', {}).get('acceptable', False)
+    return is_acceptable, result
+
+
+# ============================================================================
+# BATCH PROCESSING
+# ============================================================================
+
+def assess_multiple_files(
+    file_paths: List[Union[str, Path]], 
+    config: Dict = None,
+    verbose: bool = True
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Assess quality of multiple files.
+    
+    Args:
+        file_paths: List of file paths
+        config: Optional configuration dict
+        verbose: Print progress
+        
+    Returns:
+        Dict mapping filename to quality results
+    """
+    results = {}
+    
+    for i, path in enumerate(file_paths, 1):
+        if verbose:
+            print(f"\n[{i}/{len(file_paths)}] Assessing {Path(path).name}...")
+        
+        result = assess_quality_from_file(path, config=config, verbose=verbose)
+        results[Path(path).name] = result
+    
+    return results

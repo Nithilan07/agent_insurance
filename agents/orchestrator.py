@@ -2,13 +2,13 @@
 Multi-Agent Orchestrator with Document Quality Check and Diagnostic Indicators
 
 Pipeline:
-1. Document Quality Assessment (check clarity, alignment, readability)
+1. Document Quality Assessment (check clarity, alignment, readability) - MANDATORY
 2. Document Classification (only if quality check passes)
 3. Specialized Agents (bill, discharge, missing docs, coverage)
 4. Report Generation
 """
 
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Union
 import re
 import os
 import base64
@@ -33,7 +33,7 @@ from schemas.bill_schema import FullBillData
 # Configuration
 # -------------------------
 QUALITY_CONFIG = {
-    'clarity_threshold': 0.75,  # Slightly lower for real-world documents
+    'clarity_threshold': 0.70,  # Balanced threshold for real-world documents
     'alignment_weight': 0.25,
     'clarity_weight': 0.40,
     'readability_weight': 0.35,
@@ -56,30 +56,72 @@ def try_extract_policy_number_from_text(text: str) -> str:
     return None
 
 
+def validate_document_data(data: Any) -> Tuple[str, bytes, str]:
+    """
+    Validate and extract text, bytes, and filename from document data.
+    
+    Returns:
+        Tuple of (text, bytes, filename)
+    
+    Raises:
+        ValueError if data format is invalid
+    """
+    if isinstance(data, str):
+        # Pure text input - REJECT for quality check
+        return data, None, "unknown"
+    
+    elif isinstance(data, dict):
+        # Dict input with file data
+        text = data.get('text', '')
+        file_bytes = data.get('bytes')
+        filename = data.get('filename', 'unknown')
+        
+        if not isinstance(text, str):
+            raise ValueError("'text' must be a string")
+        
+        if file_bytes is not None and not isinstance(file_bytes, bytes):
+            raise ValueError("'bytes' must be bytes or None")
+        
+        if not isinstance(filename, str):
+            raise ValueError("'filename' must be a string")
+        
+        return text, file_bytes, filename
+    
+    else:
+        raise ValueError(f"Invalid data type: {type(data)}. Expected str or dict")
+
+
 # -------------------------
 # Main Pipeline
 # -------------------------
 def process_documents(
-    doc_data: Dict[str, Any],  # Changed to accept both text and bytes
+    doc_data: Dict[str, Any],
     generate_pdfs: bool = False,
     output_dir: str = ".",
     skip_quality_check: bool = False
 ) -> Dict[str, Any]:
-    print('Analyss started for documents:', list(doc_data.keys()))
     """
     Process documents through quality check, classification, and analysis pipeline.
     
     Args:
-        doc_data: Dict with filenames as keys and values as either:
-                  - str (extracted text)
+        doc_data: Dict with filenames as keys and values as:
                   - dict with {'text': str, 'bytes': bytes, 'filename': str}
+                  
         generate_pdfs: Whether to generate PDF reports
         output_dir: Output directory for PDFs
-        skip_quality_check: Force skip quality assessment
+        skip_quality_check: Force skip quality assessment (NOT RECOMMENDED)
         
     Returns:
         Complete analysis results with diagnostics
     """
+    
+    print('\n' + '='*80)
+    print('INSURANCE DOCUMENT PROCESSING PIPELINE')
+    print('='*80)
+    print(f'\nDocuments received: {list(doc_data.keys())}')
+    print(f'Quality check: {"DISABLED" if skip_quality_check else "ENABLED (MANDATORY)"}')
+    print(f'PDF generation: {"YES" if generate_pdfs else "NO"}')
+    print('='*80 + '\n')
 
     # ------------------------------------------------------------
     # DIAGNOSTIC FLAGS
@@ -97,84 +139,157 @@ def process_documents(
     }
 
     # ------------------------------------------------------------
-    # 0) DOCUMENT QUALITY CHECK (NEW STEP)
+    # 0) DOCUMENT QUALITY CHECK (MANDATORY for all uploaded files)
     # ------------------------------------------------------------
     quality_results = {}
-    doc_texts = {}  # Will store only quality-approved texts
+    doc_texts = {}
     rejected_docs = {}
-    
+
     print("\n" + "="*80)
     print("STEP 0: DOCUMENT QUALITY ASSESSMENT")
     print("="*80 + "\n")
-    
-    for fname, data in doc_data.items():
-        try:
-            # All documents MUST have bytes for quality check
-            if isinstance(data, str):
-                rejected_docs[fname] = {
-                    "text": data,
-                    "quality_result": None,
-                    "reason": "No image data provided - quality check requires document bytes/image"
-                }
-                print(f"✗ {fname}: REJECTED - Text-only input (no image for quality check)")
-                continue
-            
-            # Extract components
-            text = data.get('text', '')
-            file_bytes = data.get('bytes')
-            original_filename = data.get('filename', fname)
-            
-            # Quality check is mandatory
-            if not file_bytes:
-                rejected_docs[fname] = {
-                    "text": text,
-                    "quality_result": None,
-                    "reason": "No image/file bytes provided for quality assessment"
-                }
-                print(f"✗ {fname}: REJECTED - Missing file bytes")
-                continue
-            
-            # Perform quality check
-            quality_result = assess_quality_from_bytes(
-                file_bytes, 
-                original_filename, 
-                config=QUALITY_CONFIG
-            )
-            
-            quality_results[fname] = quality_result
-            diag["quality_check"] = True
-            
-            # Check if document passes quality threshold
-            if quality_result.get('success') and quality_result['decision']['acceptable']:
-                doc_texts[fname] = text
-                print(f"✓ {fname}: PASSED quality check")
-                print(f"  Weighted Score: {quality_result['decision']['weighted_score']:.3f}")
-                for metric, value in quality_result['aggregate_scores'].items():
-                    indicator = "✓" if value > 0.5 else "✗"
-                    print(f"    {indicator} {metric.capitalize():<15}: {value:.3f}")
-            else:
-                rejected_docs[fname] = {
-                    "text": text,
-                    "quality_result": quality_result,
-                    "reason": "Failed quality assessment"
-                }
-                print(f"✗ {fname}: FAILED quality check")
-                if quality_result.get('decision'):
-                    print(f"  Weighted Score: {quality_result['decision']['weighted_score']:.3f}")
-                    print(f"  Recommendations:")
-                    for rec in quality_result['decision']['recommendations']:
-                        print(f"    {rec}")
-                    
-        except Exception as e:
-            print(f"⚠ {fname}: Quality check error: {str(e)}")
-            diag["quality_check"] = f"ERROR on {fname}: {e}"
-            rejected_docs[fname] = {
-                "text": data.get('text', '') if isinstance(data, dict) else data,
-                "quality_result": None,
-                "reason": f"Quality check error: {str(e)}"
-            }
-            print(f"✗ {fname}: REJECTED due to error")
 
+    if skip_quality_check:
+        print("⚠️  WARNING: Quality check is DISABLED")
+        print("   This is NOT recommended for production use!")
+        print("   All documents will be processed without quality validation\n")
+        
+        # Skip quality check - accept all documents
+        for fname, data in doc_data.items():
+            try:
+                text, file_bytes, original_filename = validate_document_data(data)
+                doc_texts[fname] = text
+                print(f"→ {fname}: Accepted (quality check skipped)")
+            except Exception as e:
+                rejected_docs[fname] = {
+                    "text": "",
+                    "quality_result": None,
+                    "reason": f"Data validation error: {str(e)}"
+                }
+                print(f"✗ {fname}: REJECTED - {str(e)}")
+    else:
+        # MANDATORY QUALITY CHECK
+        for fname, data in doc_data.items():
+            try:
+                # Validate and extract data
+                text, file_bytes, original_filename = validate_document_data(data)
+                
+                # MANDATORY: file_bytes must be present
+                if not file_bytes:
+                    rejected_docs[fname] = {
+                        "text": text,
+                        "quality_result": None,
+                        "reason": "No file uploaded - quality check requires the actual PDF/image file"
+                    }
+                    print(f"✗ {fname}: REJECTED - No file data provided")
+                    print(f"  ℹ️  The document must be uploaded as a file (PDF/image) for quality assessment\n")
+                    continue
+                
+                # File uploaded - ALWAYS perform quality check
+                print(f"→ {fname}: Analyzing document quality...")
+                
+                quality_result = assess_quality_from_bytes(
+                    file_bytes,
+                    original_filename,
+                    config=QUALITY_CONFIG
+                )
+                
+                quality_results[fname] = quality_result
+                diag["quality_check"] = True
+                
+                # Check if quality assessment succeeded
+                if quality_result.get('success'):
+                    if quality_result['decision']['acceptable']:
+                        # PASSED quality check
+                        doc_texts[fname] = text
+                        print(f"✓ {fname}: PASSED quality check")
+                        print(f"  Document Type: {quality_result.get('document_type', 'unknown')}")
+                        print(f"  Total Pages: {quality_result.get('total_pages', 1)}")
+                        print(f"  Weighted Score: {quality_result['decision']['weighted_score']:.3f}")
+                        print(f"  Threshold: {quality_result['decision']['threshold']}")
+                        print(f"  Metrics:")
+                        for metric, value in quality_result['aggregate_scores'].items():
+                            indicator = "✓" if value > 0.5 else "✗"
+                            print(f"    {indicator} {metric.capitalize():<15}: {value:.3f}")
+                        print()
+                    else:
+                        # FAILED quality check
+                        rejected_docs[fname] = {
+                            "text": text,
+                            "quality_result": quality_result,
+                            "reason": "Document failed quality assessment"
+                        }
+                        print(f"✗ {fname}: FAILED quality check")
+                        print(f"  Weighted Score: {quality_result['decision']['weighted_score']:.3f}")
+                        print(f"  Threshold: {quality_result['decision']['threshold']}")
+                        print(f"  Status: {quality_result['decision']['status']}")
+                        print(f"  Issues detected:")
+                        for metric, value in quality_result['aggregate_scores'].items():
+                            if value < 0.5:
+                                print(f"    ✗ {metric.capitalize()}: {value:.3f}")
+                        print(f"  Recommendations:")
+                        for rec in quality_result['decision']['recommendations']:
+                            print(f"    • {rec}")
+                        print()
+                else:
+                    # Quality check failed to run
+                    rejected_docs[fname] = {
+                        "text": text,
+                        "quality_result": quality_result,
+                        "reason": f"Quality check error: {quality_result.get('error', 'Unknown error')}"
+                    }
+                    print(f"✗ {fname}: Quality check FAILED to run")
+                    print(f"  Error: {quality_result.get('error', 'Unknown error')}\n")
+                        
+            except ValueError as e:
+                print(f"✗ {fname}: Data validation ERROR: {str(e)}")
+                rejected_docs[fname] = {
+                    "text": "",
+                    "quality_result": None,
+                    "reason": f"Data validation error: {str(e)}"
+                }
+                print()
+                
+            except Exception as e:
+                print(f"✗ {fname}: Quality check EXCEPTION: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                
+                rejected_docs[fname] = {
+                    "text": text if 'text' in locals() else "",
+                    "quality_result": None,
+                    "reason": f"Quality check exception: {str(e)}"
+                }
+                print(f"  Document REJECTED due to processing error\n")
+
+    # Summary
+    print(f"{'='*80}")
+    print(f"Quality Check Summary:")
+    print(f"  ✓ Accepted: {len(doc_texts)}")
+    print(f"  ✗ Rejected: {len(rejected_docs)}")
+    if rejected_docs:
+        print(f"\n  Rejected Documents:")
+        for fname, info in rejected_docs.items():
+            print(f"    • {fname}: {info['reason']}")
+    print(f"{'='*80}\n")
+
+    # If all documents rejected, return early
+    if not doc_texts:
+        print("⚠️  No documents passed quality check. Aborting pipeline.\n")
+        return {
+            "status": "error",
+            "error": "No documents passed quality check",
+            "quality_results": quality_results,
+            "rejected_documents": rejected_docs,
+            "classified": {},
+            "uploaded_doc_types": [],
+            "policy_lookup": {"insurer_name": None, "features": None},
+            "missing_documents": {"missing_docs": [], "required_docs": [], "uploaded_docs": []},
+            "coverage_result": {},
+            "report": {},
+            "generated_pdfs": {},
+            "diagnostics": diag
+        }
 
     # ------------------------------------------------------------
     # 1) CLASSIFICATION
@@ -196,6 +311,7 @@ def process_documents(
                     "quality_passed": quality_results.get(fname, {}).get('decision', {}).get('acceptable', False)
                 }
                 uploaded_types.append("unknown")
+                print(f"⚠️  {fname}: Empty text - classified as UNKNOWN")
                 continue
             
             try:
@@ -224,13 +340,15 @@ def process_documents(
                 
     except Exception as e:
         diag["classifier"] = f"ERROR: {e}"
+        print(f"✗ Classification ERROR: {str(e)}")
 
     uploaded_types = list(set(uploaded_types))
+    print()
 
     # ------------------------------------------------------------
     # 2) ROUTE TO BILL AGENT
     # ------------------------------------------------------------
-    print("\n" + "="*80)
+    print("="*80)
     print("STEP 2: BILL EXTRACTION")
     print("="*80 + "\n")
     
@@ -244,14 +362,14 @@ def process_documents(
             try:
                 bill_model = extract_bill_full(meta["text"])
                 diag["bill_agent"] = True
-                print(f"✓ Extracted bill data from {fname}")
+                print(f"✓ Extracted bill data from {fname}\n")
 
                 bill_dict_partial = (
                     bill_model.model_dump() if hasattr(bill_model, "model_dump") else bill_model.dict()
                 )
                 break
             except Exception as e:
-                print(f"✗ Bill extraction failed: {str(e)}")
+                print(f"✗ Bill extraction failed: {str(e)}\n")
 
     # Fallback using discharge summary
     if not bill_model:
@@ -282,16 +400,16 @@ def process_documents(
                     bill_dict_partial = (
                         bill_model.model_dump() if hasattr(bill_model, "model_dump") else bill_model.dict()
                     )
-                    print(f"  ✓ Created bill data from discharge summary")
+                    print(f"  ✓ Created bill data from discharge summary\n")
                 except Exception as e:
                     bill_model = None
-                    print(f"  ✗ Fallback failed: {str(e)}")
+                    print(f"  ✗ Fallback failed: {str(e)}\n")
                 break
 
     # ------------------------------------------------------------
     # 3) DISCHARGE AGENT (when available)
     # ------------------------------------------------------------
-    print("\n" + "="*80)
+    print("="*80)
     print("STEP 3: DISCHARGE SUMMARY ANALYSIS")
     print("="*80 + "\n")
     
@@ -303,15 +421,15 @@ def process_documents(
                 diag["discharge_agent"] = True
                 admission_info.update(discharge_info)
                 extracted_flags["has_discharge_summary"] = True
-                print(f"✓ Analyzed discharge summary from {fname}")
+                print(f"✓ Analyzed discharge summary from {fname}\n")
                 break
             except Exception as e:
-                print(f"✗ Discharge analysis failed: {str(e)}")
+                print(f"✗ Discharge analysis failed: {str(e)}\n")
 
     # ------------------------------------------------------------
     # 4) POLICY LOOKUP
     # ------------------------------------------------------------
-    print("\n" + "="*80)
+    print("="*80)
     print("STEP 4: POLICY LOOKUP")
     print("="*80 + "\n")
     
@@ -335,6 +453,8 @@ def process_documents(
             policy_lookup_info["insurer_name"] = mapping.get("insurer_name")
             policy_lookup_info["features"] = mapping.get("features")
             print(f"  Insurer: {policy_lookup_info['insurer_name']}")
+    
+    print()
 
     # ------------------------------------------------------------
     # 5) BUILD FULL BILL DATA
@@ -383,7 +503,7 @@ def process_documents(
     # ------------------------------------------------------------
     # 6) MISSING DOCUMENTS AGENT
     # ------------------------------------------------------------
-    print("\n" + "="*80)
+    print("="*80)
     print("STEP 5: MISSING DOCUMENTS CHECK")
     print("="*80 + "\n")
     
@@ -395,9 +515,10 @@ def process_documents(
         )
         diag["missing_docs_agent"] = True
         if missing_result.get("missing_docs"):
-            print(f"⚠ Missing documents: {', '.join(missing_result['missing_docs'])}")
+            print(f"⚠️  Missing documents: {', '.join(missing_result['missing_docs'])}")
         else:
             print("✓ All required documents present")
+        print()
     except Exception as e:
         diag["missing_docs_agent"] = f"ERROR: {e}"
         missing_result = {
@@ -407,11 +528,12 @@ def process_documents(
             "optional_docs": [],
             "recommended_actions": [f"Error determining missing documents: {str(e)}"]
         }
+        print(f"✗ Missing documents check failed: {str(e)}\n")
 
     # ------------------------------------------------------------
     # 7) COVERAGE AGENT
     # ------------------------------------------------------------
-    print("\n" + "="*80)
+    print("="*80)
     print("STEP 6: COVERAGE CALCULATION")
     print("="*80 + "\n")
     
@@ -426,7 +548,7 @@ def process_documents(
         diag["coverage_agent"] = True
         print(f"✓ Coverage calculated")
         print(f"  Total Bill: ₹{coverage_result['totals']['total_bill_amount']:.2f}")
-        print(f"  Insurance Payable: ₹{coverage_result['totals']['final_insurance_payable']:.2f}")
+        print(f"  Insurance Payable: ₹{coverage_result['totals']['final_insurance_payable']:.2f}\n")
     except Exception as e:
         diag["coverage_agent"] = f"ERROR: {e}"
         coverage_result = {
@@ -443,11 +565,12 @@ def process_documents(
             "recommended_actions": ["Please check your documents and try again."],
             "verdict": "Error"
         }
+        print(f"✗ Coverage calculation failed: {str(e)}\n")
 
     # ------------------------------------------------------------
     # 8) REPORT AGENT
     # ------------------------------------------------------------
-    print("\n" + "="*80)
+    print("="*80)
     print("STEP 7: REPORT GENERATION")
     print("="*80 + "\n")
     
@@ -455,7 +578,7 @@ def process_documents(
         report = build_claim_readiness_report(full_bill_dict, coverage_result, policy_lookup_info)
         diag["report_agent"] = True
         print(f"✓ Report generated")
-        print(f"  Verdict: {report.get('verdict', 'Unknown')}")
+        print(f"  Verdict: {report.get('verdict', 'Unknown')}\n")
     except Exception as e:
         diag["report_agent"] = f"ERROR: {e}"
         report = {
@@ -469,6 +592,7 @@ def process_documents(
             "missing_documents": [],
             "policy_features_used": {}
         }
+        print(f"✗ Report generation failed: {str(e)}\n")
 
     # ------------------------------------------------------------
     # 9) PDF GENERATION
@@ -476,7 +600,7 @@ def process_documents(
     generated = {}
 
     if generate_pdfs:
-        print("\n" + "="*80)
+        print("="*80)
         print("STEP 8: PDF GENERATION")
         print("="*80 + "\n")
         
@@ -505,11 +629,12 @@ def process_documents(
 
         generated["report_pdf"] = report_pdf_path
         generated["claim_form_pdf"] = form_pdf_path
+        print()
 
     # ------------------------------------------------------------
     # Return complete result
     # ------------------------------------------------------------
-    print("\n" + "="*80)
+    print("="*80)
     print("PIPELINE COMPLETE")
     print("="*80 + "\n")
     
@@ -541,7 +666,7 @@ def _fastapi_app():
     app = FastAPI(title="Insurance Agent Orchestrator with Quality Check")
 
     class ProcessRequest(BaseModel):
-        files: Dict[str, Any]  # Can be text or dict with text+bytes
+        files: Dict[str, Any]  # Dict with text+bytes+filename
         generate_pdfs: bool = False
         skip_quality_check: bool = False
 
@@ -560,34 +685,3 @@ def _fastapi_app():
 
 app = _fastapi_app()
 
-
-if __name__ == "__main__":
-    samples = {
-        "bill.txt": """FINAL BILL
-Hospital Name: Apollo Hospitals
-Invoice No: INV-1234
-Room Charges      Qty  Rate    Amount
-Room Rent              3,000   15,000
-Doctor Fees            8,000
-Pharmacy               1,200
-Grand Total: ₹24,200
-""",
-        "discharge.txt": """DISCHARGE SUMMARY
-Admission Date: 12/11/2025
-Discharge Date: 14/11/2025
-Final Diagnosis: RTA with Fracture
-Procedure: ORIF Surgery
-Doctor: Dr Arun
-MLC No: MLC-5566
-FIR No: FIR-9988
-""",
-        "insurance_card.txt": """HEALTH INSURANCE CARD
-Policy No: 4071123456
-Member ID: M-9988
-Insurer: HDFC ERGO
-"""
-    }
-
-    out = process_documents(samples, generate_pdfs=True)
-    import json
-    print(json.dumps(out, indent=2))
