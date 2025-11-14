@@ -1,18 +1,12 @@
 """
-Document Quality Assessment Agent - Optimized for Backend Integration
+Document Quality Assessment Agent - Fixed PDF Handling
 
-Evaluates document clarity, alignment, readability, and AI-generation likelihood.
-Uses convert_from_path for better PDF handling with automatic temp file management.
+Properly handles both scanned images and digital PDFs by detecting document type
+and applying appropriate quality metrics.
 
 Usage:
-    # Analyze from file path
     result = assess_quality_from_file('document.pdf')
-    
-    # Analyze from bytes (automatically handles temp files)
-    with open('scan.jpg', 'rb') as f:
-        result = assess_quality_from_bytes(f.read(), 'scan.jpg')
-    
-    # Analyze from base64
+    result = assess_quality_from_bytes(file_data, 'scan.jpg')
     result = assess_quality_from_base64(base64_string, 'document.pdf')
 """
 
@@ -44,12 +38,113 @@ DEFAULT_CONFIG = {
 
 
 # ============================================================================
+# DOCUMENT TYPE DETECTION
+# ============================================================================
+
+def detect_document_type(image: np.ndarray, verbose: bool = False) -> str:
+    """
+    Detect if document is a clean digital render or a scanned/photographed document.
+    
+    Returns:
+        'digital' - Clean PDF render or digital document
+        'scanned' - Scanned or photographed document
+    """
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        
+        # Check 1: Laplacian variance (clarity/sharpness)
+        laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+        
+        # Check 2: Text sharpness using gradient magnitude
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        gradient_magnitude = np.sqrt(sobelx**2 + sobely**2)
+        avg_gradient = np.mean(gradient_magnitude)
+        
+        # Check 3: Background uniformity
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        background_pixels = np.sum(binary == 255)
+        background_ratio = background_pixels / gray.size
+        
+        # Check 4: Noise level in background regions
+        background_mask = binary == 255
+        if np.sum(background_mask) > 0:
+            background_std = np.std(gray[background_mask])
+        else:
+            background_std = 255
+        
+        # Check 5: JPEG artifacts (scanned docs often have compression artifacts)
+        dct = cv2.dct(np.float32(gray[:64, :64]))
+        high_freq_energy = np.sum(np.abs(dct[32:, 32:]))
+        
+        # Check 6: Color consistency (digital docs have more consistent colors)
+        if len(image.shape) == 3:
+            color_var = np.var(image, axis=(0, 1)).mean()
+        else:
+            color_var = 0
+        
+        # Scoring system with detailed analysis
+        digital_score = 0
+        indicators = []
+        
+        # High Laplacian variance suggests sharp, clear digital document
+        if laplacian_var > 500:
+            digital_score += 2
+            indicators.append(f"High clarity ({laplacian_var:.1f})")
+        elif laplacian_var < 100:
+            indicators.append(f"Low clarity ({laplacian_var:.1f})")
+        
+        # Strong gradients suggest sharp text edges (digital)
+        if avg_gradient > 20:
+            digital_score += 2
+            indicators.append(f"Sharp text edges ({avg_gradient:.1f})")
+        
+        # Clean, uniform background
+        if background_ratio > 0.65 and background_std < 10:
+            digital_score += 2
+            indicators.append(f"Clean background (ratio={background_ratio:.2f}, std={background_std:.1f})")
+        elif background_ratio < 0.5:
+            indicators.append(f"Noisy background (ratio={background_ratio:.2f})")
+        
+        # Low high-frequency energy suggests clean rendering
+        if high_freq_energy < 1000:
+            digital_score += 1
+            indicators.append("Low compression artifacts")
+        
+        # Image dimensions typical of PDF renders (often 1654x2339 or similar)
+        if h > 2000 or w > 1500:
+            digital_score += 1
+            indicators.append(f"Large dimensions ({w}x{h})")
+        
+        if verbose:
+            print(f"  → Document type analysis:")
+            print(f"     Laplacian variance: {laplacian_var:.1f}")
+            print(f"     Gradient magnitude: {avg_gradient:.1f}")
+            print(f"     Background ratio: {background_ratio:.2f}")
+            print(f"     Background std: {background_std:.1f}")
+            print(f"     Digital score: {digital_score}/8")
+            print(f"     Indicators: {', '.join(indicators)}")
+        
+        # Decision threshold - be more generous toward digital classification
+        return 'digital' if digital_score >= 3 else 'scanned'
+        
+    except Exception as e:
+        print(f"  Warning: Document type detection failed: {str(e)}")
+        return 'scanned'  # Default to scanned for safety
+
+
+# ============================================================================
 # CORE QUALITY ASSESSMENT FUNCTIONS
 # ============================================================================
 
-def alignment_score(image: np.ndarray) -> float:
+def alignment_score(image: np.ndarray, doc_type: str = 'scanned') -> float:
     """Measures skew or tilt in the document."""
     try:
+        # Digital documents are typically perfectly aligned
+        if doc_type == 'digital':
+            return 1.0
+        
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray, 50, 150, apertureSize=3)
         lines = cv2.HoughLines(edges, 1, np.pi / 180, 200)
@@ -63,42 +158,95 @@ def alignment_score(image: np.ndarray) -> float:
         return float(min(1, score))
     except Exception as e:
         print(f"  Warning: Alignment score calculation failed: {str(e)}")
-        return 0.5  # Return neutral score on error
+        return 0.5
 
 
-def clarity_score(image: np.ndarray) -> float:
-    """Measures blurriness using Laplacian variance."""
+def clarity_score(image: np.ndarray, doc_type: str = 'scanned') -> float:
+    """Measures clarity - adjusted for document type."""
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         fm = cv2.Laplacian(gray, cv2.CV_64F).var()
-        return float(min(fm / 500.0, 1.0))
+        
+        if doc_type == 'digital':
+            # Digital docs should have high clarity - normalize differently
+            # They typically have variance > 1000
+            return float(min(fm / 1000.0, 1.0))
+        else:
+            # Scanned docs - original normalization
+            return float(min(fm / 500.0, 1.0))
+            
     except Exception as e:
         print(f"  Warning: Clarity score calculation failed: {str(e)}")
         return 0.5
 
 
-def readability_score(image: np.ndarray) -> float:
-    """Measures OCR text box detection ratio."""
+def readability_score(image: np.ndarray, doc_type: str = 'scanned') -> float:
+    """Measures text readability using OCR."""
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gray = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
         
-        data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
-        text_boxes = sum([1 for conf in data['conf'] if conf != '-1'])
-        total_boxes = len(data['conf'])
+        # Try multiple preprocessing approaches
+        preprocessed_images = []
         
-        if total_boxes == 0:
-            return 0.0
+        if doc_type == 'digital':
+            # For digital documents, minimal preprocessing
+            preprocessed_images.append(gray)
+            # Also try with slight thresholding
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            preprocessed_images.append(binary)
+        else:
+            # For scanned documents, try multiple approaches
+            # 1. Otsu's thresholding
+            _, binary1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            preprocessed_images.append(binary1)
+            
+            # 2. Adaptive thresholding
+            adaptive = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                            cv2.THRESH_BINARY, 11, 2)
+            preprocessed_images.append(adaptive)
+            
+            # 3. Original with denoising
+            denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+            _, binary2 = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            preprocessed_images.append(binary2)
         
-        return float(text_boxes / total_boxes)
+        # Try OCR on all preprocessed versions and take the best result
+        best_ratio = 0
+        
+        for proc_img in preprocessed_images:
+            try:
+                data = pytesseract.image_to_data(proc_img, output_type=pytesseract.Output.DICT)
+                
+                # Count confident text detections
+                confident_detections = sum([1 for conf in data['conf'] 
+                                          if isinstance(conf, (int, float)) and conf > 30])
+                total_boxes = len([c for c in data['conf'] if c != -1])
+                
+                if total_boxes > 0:
+                    ratio = confident_detections / total_boxes
+                    best_ratio = max(best_ratio, ratio)
+            except:
+                continue
+        
+        # Digital documents should have high text detection
+        if doc_type == 'digital':
+            # Be more lenient - digital docs are inherently readable
+            return float(min(best_ratio * 1.3, 1.0))
+        
+        return float(min(best_ratio * 1.1, 1.0))
+        
     except Exception as e:
         print(f"  Warning: Readability score calculation failed: {str(e)}")
         return 0.5
 
 
-def ai_generated_probability(image: np.ndarray) -> float:
+def ai_generated_probability(image: np.ndarray, doc_type: str = 'scanned') -> float:
     """Estimate chance that document is AI-generated."""
     try:
+        # Digital PDFs are NOT AI-generated - they're just digital documents
+        if doc_type == 'digital':
+            return 0.0  # No AI generation penalty for clean PDFs
+        
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
         # Entropy-based smoothness score
@@ -121,22 +269,39 @@ def ai_generated_probability(image: np.ndarray) -> float:
         
         ai_prob = (0.5 * smoothness_score + 0.5 * high_freq_score) * 0.5
         return float(np.clip(ai_prob, 0, 1))
+        
     except Exception as e:
         print(f"  Warning: AI probability calculation failed: {str(e)}")
-        return 0.3  # Return low AI probability on error
+        return 0.3
 
 
-def evaluate_image(image: np.ndarray) -> Dict[str, float]:
+def evaluate_image(image: np.ndarray, verbose: bool = False) -> Dict[str, Any]:
     """Evaluate all quality metrics for a single image."""
+    # First detect document type
+    doc_type = detect_document_type(image, verbose=verbose)
+    
+    if verbose:
+        print(f"     → Detected type: {doc_type}")
+    
+    scores = {
+        'alignment': alignment_score(image, doc_type),
+        'clarity': clarity_score(image, doc_type),
+        'readability': readability_score(image, doc_type),
+        'ai_generated': ai_generated_probability(image, doc_type)
+    }
+    
+    if verbose:
+        print(f"     → Scores: clarity={scores['clarity']:.3f}, "
+              f"readability={scores['readability']:.3f}, "
+              f"alignment={scores['alignment']:.3f}")
+    
     return {
-        'alignment': alignment_score(image),
-        'clarity': clarity_score(image),
-        'readability': readability_score(image),
-        'ai_generated': ai_generated_probability(image)
+        'scores': scores,
+        'document_type': doc_type
     }
 
 
-def aggregate_scores(page_results: List[Dict]) -> Dict[str, float]:
+def aggregate_scores(page_results: List[Dict]) -> Dict[str, Any]:
     """Aggregate scores across all pages."""
     all_scores = {
         'alignment': [],
@@ -145,22 +310,40 @@ def aggregate_scores(page_results: List[Dict]) -> Dict[str, float]:
         'ai_generated': []
     }
     
+    doc_types = []
+    
     for page in page_results:
         for metric, value in page['scores'].items():
             all_scores[metric].append(value)
+        doc_types.append(page.get('detected_type', 'unknown'))
+    
+    # Determine overall document type (majority vote)
+    from collections import Counter
+    type_counts = Counter(doc_types)
+    overall_type = type_counts.most_common(1)[0][0] if type_counts else 'unknown'
     
     return {
-        metric: float(np.mean(values))
-        for metric, values in all_scores.items()
+        'scores': {
+            metric: float(np.mean(values))
+            for metric, values in all_scores.items()
+        },
+        'overall_document_type': overall_type
     }
 
 
-def make_decision(scores: Dict[str, float], config: Dict = None) -> Dict[str, Any]:
+def make_decision(scores: Dict[str, float], config: Dict = None, doc_type: str = 'scanned') -> Dict[str, Any]:
     """Determine if document is readable and acceptable."""
     if config is None:
         config = DEFAULT_CONFIG
     
-    ai_penalty = scores['ai_generated'] * 0.3
+    # Adjust AI penalty based on document type
+    if doc_type == 'digital':
+        ai_penalty = 0  # No AI penalty for digital documents
+        # Use more lenient threshold for digital documents
+        effective_threshold = config['clarity_threshold'] * 0.85
+    else:
+        ai_penalty = scores['ai_generated'] * 0.3
+        effective_threshold = config['clarity_threshold']
     
     weighted_score = (
         config['alignment_weight'] * scores['alignment'] +
@@ -169,36 +352,51 @@ def make_decision(scores: Dict[str, float], config: Dict = None) -> Dict[str, An
         config['ai_penalty_weight'] * ai_penalty
     )
     
-    is_acceptable = weighted_score > config['clarity_threshold']
+    is_acceptable = weighted_score > effective_threshold
     
-    recommendations = generate_recommendations(scores, weighted_score, config['clarity_threshold'])
+    recommendations = generate_recommendations(scores, weighted_score, effective_threshold, doc_type)
     
     return {
         'acceptable': is_acceptable,
         'weighted_score': float(weighted_score),
         'ai_penalty': float(ai_penalty),
-        'threshold': config['clarity_threshold'],
+        'threshold': effective_threshold,
+        'document_type': doc_type,
         'status': 'READABLE ✅' if is_acceptable else 'NOT READABLE ❌',
         'recommendations': recommendations
     }
 
 
-def generate_recommendations(scores: Dict[str, float], weighted_score: float, threshold: float) -> List[str]:
+def generate_recommendations(scores: Dict[str, float], weighted_score: float, threshold: float, doc_type: str = 'scanned') -> List[str]:
     """Generate recommendations based on scores."""
     recommendations = []
     
-    if scores['clarity'] < 0.5:
-        recommendations.append("⚠️ Low clarity - document may be blurry or low resolution")
+    # Add document type info
+    if doc_type == 'digital':
+        recommendations.append("ℹ️ Digital document detected (clean PDF/digital render)")
+    else:
+        recommendations.append("ℹ️ Scanned/photographed document detected")
     
-    if scores['alignment'] < 0.5:
-        recommendations.append("⚠️ Poor alignment - document may be skewed or tilted")
+    # Type-specific recommendations
+    if doc_type == 'scanned':
+        if scores['clarity'] < 0.5:
+            recommendations.append("⚠️ Low clarity - document may be blurry or low resolution")
+        
+        if scores['alignment'] < 0.5:
+            recommendations.append("⚠️ Poor alignment - document may be skewed or tilted")
+        
+        if scores['ai_generated'] > 0.6:
+            recommendations.append("ℹ️ Document shows characteristics of AI generation")
+    else:
+        # Digital document recommendations
+        if scores['readability'] < 0.5:
+            recommendations.append("⚠️ Low text detection - may be image-heavy or have rendering issues")
     
+    # Universal readability check
     if scores['readability'] < 0.5:
         recommendations.append("⚠️ Low readability - OCR detection is poor")
     
-    if scores['ai_generated'] > 0.6:
-        recommendations.append("ℹ️ Document shows characteristics of AI generation")
-    
+    # Final verdict
     if weighted_score <= threshold:
         recommendations.append("❌ Document does not meet quality standards for processing")
         recommendations.append("   Please upload a clearer scan or higher quality image")
@@ -222,18 +420,13 @@ def pdf_path_to_images(pdf_path: Union[str, Path], dpi: int = 200) -> List[np.nd
 
 
 def pdf_bytes_to_images(pdf_data: bytes, temp_suffix: str = '.pdf', dpi: int = 200) -> List[np.ndarray]:
-    """
-    Convert PDF bytes to list of OpenCV images.
-    Creates a temporary file to use convert_from_path, then cleans up.
-    """
+    """Convert PDF bytes to list of OpenCV images."""
     tmp_path = None
     try:
-        # Create temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=temp_suffix) as tmp_file:
             tmp_file.write(pdf_data)
             tmp_path = tmp_file.name
         
-        # Convert using path-based method
         images = pdf_path_to_images(tmp_path, dpi=dpi)
         return images
         
@@ -241,7 +434,6 @@ def pdf_bytes_to_images(pdf_data: bytes, temp_suffix: str = '.pdf', dpi: int = 2
         raise ValueError(f"Failed to convert PDF bytes to images: {str(e)}")
         
     finally:
-        # Always clean up temporary file
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
@@ -263,17 +455,7 @@ def bytes_to_image(image_data: bytes) -> np.ndarray:
 # ============================================================================
 
 def assess_quality_from_file(file_path: Union[str, Path], config: Dict = None, verbose: bool = True) -> Dict[str, Any]:
-    """
-    Assess document quality from file path.
-    
-    Args:
-        file_path: Path to the document
-        config: Optional configuration dict
-        verbose: Print detailed progress
-        
-    Returns:
-        JSON-serializable dict with quality analysis
-    """
+    """Assess document quality from file path."""
     file_path = Path(file_path)
     
     if not file_path.exists():
@@ -292,11 +474,11 @@ def assess_quality_from_file(file_path: Union[str, Path], config: Dict = None, v
         # Convert to images
         if file_ext == '.pdf':
             images = pdf_path_to_images(file_path)
-            doc_type = 'pdf'
+            source_type = 'pdf'
         elif file_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']:
             with open(file_path, 'rb') as f:
                 images = [bytes_to_image(f.read())]
-            doc_type = 'image'
+            source_type = 'image'
         else:
             return {
                 'success': False,
@@ -311,25 +493,30 @@ def assess_quality_from_file(file_path: Union[str, Path], config: Dict = None, v
             if verbose:
                 print(f"  → Processing page {i+1}/{len(images)}...")
             
-            page_scores = evaluate_image(img)
+            page_eval = evaluate_image(img)
             page_results.append({
                 'page': i + 1,
-                'scores': page_scores
+                'scores': page_eval['scores'],
+                'detected_type': page_eval['document_type']
             })
         
         # Calculate aggregate scores
-        agg_scores = aggregate_scores(page_results)
+        agg_result = aggregate_scores(page_results)
+        agg_scores = agg_result['scores']
+        overall_type = agg_result['overall_document_type']
         
         if verbose:
+            print(f"  → Detected as: {overall_type}")
             print(f"  → Aggregate scores calculated")
         
         # Make decision
-        decision_result = make_decision(agg_scores, config)
+        decision_result = make_decision(agg_scores, config, overall_type)
         
         return {
             'success': True,
             'filename': file_path.name,
-            'document_type': doc_type,
+            'source_type': source_type,
+            'detected_document_type': overall_type,
             'total_pages': len(images),
             'timestamp': datetime.now().isoformat(),
             'aggregate_scores': agg_scores,
@@ -346,25 +533,8 @@ def assess_quality_from_file(file_path: Union[str, Path], config: Dict = None, v
         }
 
 
-def assess_quality_from_bytes(
-    file_data: bytes, 
-    filename: str, 
-    config: Dict = None,
-    verbose: bool = True
-) -> Dict[str, Any]:
-    """
-    Assess document quality from bytes.
-    For PDFs, creates a temporary file to use convert_from_path.
-    
-    Args:
-        file_data: Raw file bytes
-        filename: Original filename (used to determine file type)
-        config: Optional configuration dict
-        verbose: Print detailed progress
-        
-    Returns:
-        JSON-serializable dict with quality analysis
-    """
+def assess_quality_from_bytes(file_data: bytes, filename: str, config: Dict = None, verbose: bool = True) -> Dict[str, Any]:
+    """Assess document quality from bytes."""
     if config is None:
         config = DEFAULT_CONFIG
     
@@ -377,10 +547,10 @@ def assess_quality_from_bytes(
         # Convert to images
         if file_ext == '.pdf':
             images = pdf_bytes_to_images(file_data, temp_suffix=file_ext)
-            doc_type = 'pdf'
+            source_type = 'pdf'
         elif file_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']:
             images = [bytes_to_image(file_data)]
-            doc_type = 'image'
+            source_type = 'image'
         else:
             return {
                 'success': False,
@@ -395,22 +565,26 @@ def assess_quality_from_bytes(
             if verbose:
                 print(f"  → Analyzing page {i+1}/{len(images)}...")
             
-            page_scores = evaluate_image(img)
+            page_eval = evaluate_image(img, verbose=verbose)
             page_results.append({
                 'page': i + 1,
-                'scores': page_scores
+                'scores': page_eval['scores'],
+                'detected_type': page_eval['document_type']
             })
         
         # Calculate aggregate scores
-        agg_scores = aggregate_scores(page_results)
+        agg_result = aggregate_scores(page_results)
+        agg_scores = agg_result['scores']
+        overall_type = agg_result['overall_document_type']
         
         # Make decision
-        decision_result = make_decision(agg_scores, config)
+        decision_result = make_decision(agg_scores, config, overall_type)
         
         return {
             'success': True,
             'filename': filename,
-            'document_type': doc_type,
+            'source_type': source_type,
+            'detected_document_type': overall_type,
             'total_pages': len(images),
             'timestamp': datetime.now().isoformat(),
             'aggregate_scores': agg_scores,
@@ -427,24 +601,8 @@ def assess_quality_from_bytes(
         }
 
 
-def assess_quality_from_base64(
-    base64_data: str, 
-    filename: str, 
-    config: Dict = None,
-    verbose: bool = True
-) -> Dict[str, Any]:
-    """
-    Assess document quality from base64 string.
-    
-    Args:
-        base64_data: Base64 encoded file data
-        filename: Original filename
-        config: Optional configuration dict
-        verbose: Print detailed progress
-        
-    Returns:
-        JSON-serializable dict with quality analysis
-    """
+def assess_quality_from_base64(base64_data: str, filename: str, config: Dict = None, verbose: bool = True) -> Dict[str, Any]:
+    """Assess document quality from base64 string."""
     try:
         file_data = base64.b64decode(base64_data)
         return assess_quality_from_bytes(file_data, filename, config, verbose)
@@ -457,72 +615,17 @@ def assess_quality_from_base64(
         }
 
 
-def assess_image_array(
-    image: np.ndarray, 
-    identifier: str = "image", 
-    config: Dict = None
-) -> Dict[str, Any]:
-    """
-    Assess quality of a single image array.
-    
-    Args:
-        image: OpenCV image (BGR format)
-        identifier: Identifier for the image
-        config: Optional configuration dict
-        
-    Returns:
-        JSON-serializable dict with quality analysis
-    """
-    if config is None:
-        config = DEFAULT_CONFIG
-    
-    try:
-        scores = evaluate_image(image)
-        decision_result = make_decision(scores, config)
-        
-        return {
-            'success': True,
-            'identifier': identifier,
-            'document_type': 'image_array',
-            'timestamp': datetime.now().isoformat(),
-            'scores': scores,
-            'decision': decision_result
-        }
-        
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e),
-            'identifier': identifier,
-            'timestamp': datetime.now().isoformat()
-        }
-
-
 # ============================================================================
 # CONVENIENCE FUNCTIONS
 # ============================================================================
 
 def quick_assess(file_path: str, config: Dict = None) -> Dict[str, Any]:
-    """Quick assessment of a document - convenience function."""
+    """Quick assessment of a document."""
     return assess_quality_from_file(file_path, config=config)
 
 
-def validate_document_bytes(
-    file_data: bytes, 
-    filename: str,
-    min_threshold: float = 0.70
-) -> Tuple[bool, Dict[str, Any]]:
-    """
-    Validate document quality and return pass/fail with full results.
-    
-    Args:
-        file_data: Raw file bytes
-        filename: Original filename
-        min_threshold: Minimum quality threshold
-        
-    Returns:
-        Tuple of (is_acceptable, full_results)
-    """
+def validate_document_bytes(file_data: bytes, filename: str, min_threshold: float = 0.70) -> Tuple[bool, Dict[str, Any]]:
+    """Validate document quality and return pass/fail with full results."""
     config = DEFAULT_CONFIG.copy()
     config['clarity_threshold'] = min_threshold
     
@@ -535,26 +638,8 @@ def validate_document_bytes(
     return is_acceptable, result
 
 
-# ============================================================================
-# BATCH PROCESSING
-# ============================================================================
-
-def assess_multiple_files(
-    file_paths: List[Union[str, Path]], 
-    config: Dict = None,
-    verbose: bool = True
-) -> Dict[str, Dict[str, Any]]:
-    """
-    Assess quality of multiple files.
-    
-    Args:
-        file_paths: List of file paths
-        config: Optional configuration dict
-        verbose: Print progress
-        
-    Returns:
-        Dict mapping filename to quality results
-    """
+def assess_multiple_files(file_paths: List[Union[str, Path]], config: Dict = None, verbose: bool = True) -> Dict[str, Dict[str, Any]]:
+    """Assess quality of multiple files."""
     results = {}
     
     for i, path in enumerate(file_paths, 1):
