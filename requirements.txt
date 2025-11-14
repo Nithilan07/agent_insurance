@@ -4,8 +4,8 @@ pydantic
 python-multipart
 regex
 reportlab
-easyocr 
-pdf2image 
+easyocr
+pdf2image
 pillow
-poppler
 pdfminer.six
+pytesseract
