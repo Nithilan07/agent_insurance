@@ -23,7 +23,7 @@ from agents.report_agent import build_claim_readiness_report
 from utils.pdf_generator import generate_report_pdf, generate_claim_form_pdf
 
 # Import quality assessment (function-based)
-from agents.document_quality_agent import assess_quality_from_bytes
+from agents.document_clarity import assess_quality_from_bytes
 
 from policy_lookup import find_insurer  
 from schemas.bill_schema import FullBillData
@@ -65,6 +65,7 @@ def process_documents(
     output_dir: str = ".",
     skip_quality_check: bool = False
 ) -> Dict[str, Any]:
+    print('Analyss started for documents:', list(doc_data.keys()))
     """
     Process documents through quality check, classification, and analysis pipeline.
     

@@ -7,5 +7,5 @@ reportlab
 easyocr 
 pdf2image 
 pillow
-poppler
 pdfminer.six
+pytesseract
