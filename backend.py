@@ -4,8 +4,9 @@ from typing import List
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.websockets import WebSocket, WebSocketDisconnect
+from urllib.parse import quote
 
 from utils.models import init_db, save_claim, update_claim, get_all_claims, get_claim
 from agents.ocr_agent import extract_text
@@ -13,7 +14,7 @@ from agents.orchestrator import process_documents
 
 # Directories
 BASE_UPLOAD = "uploaded_files"
-BASE_OUTPUT = "generated_outputs"
+BASE_OUTPUT = "insurance-ui/generated_outputs"
 os.makedirs(BASE_UPLOAD, exist_ok=True)
 os.makedirs(BASE_OUTPUT, exist_ok=True)
 
@@ -78,26 +79,50 @@ wsmanager = WSManager()
 async def run_pipeline(claimId, filepaths, output_dir):
 
     update_claim(claimId, stage="ocr", status="processing")
+    print(f"[{claimId}] 🔵 Stage: OCR — Updating claim to status=processing")
     await wsmanager.broadcast_all({"claimId": claimId, "status": "ocr"})
     await wsmanager.broadcast_claim(claimId, {"stage": "ocr", "message": "Extracting text..."})
+    print(f"[{claimId}] 📡 WS -> OCR stage broadcast sent")
+
 
     # OCR
+    print(f"[{claimId}] 📄 Starting OCR on {len(filepaths)} files")
     texts = {}
     for path in filepaths:
+        print(f"[{claimId}] 🖼️ OCR Processing File: {path}")
         ocr = extract_text(path)
-        texts[os.path.basename(path)] = ocr.get("text", "")
+        extracted_text = ocr.get("text", "")
+        print(f"[{claimId}] ✍️ OCR Extracted {len(extracted_text)} characters from {os.path.basename(path)}")
+        texts[os.path.basename(path)] = extracted_text
+
+    print(f"[{claimId}] ✅ OCR Completed for all files")
+
 
     update_claim(claimId, stage="agent1")
+    print(f"[{claimId}] 🔵 Stage: Agent 1 — Document Analysis started")
     await wsmanager.broadcast_all({"claimId": claimId, "status": "agent1"})
     await wsmanager.broadcast_claim(claimId, {"stage": "agent1", "message": "Analyzing documents..."})
+    print(f"[{claimId}] 📡 WS -> Agent1 stage broadcast sent")
+
 
     # Orchestrator
+    print(f"[{claimId}] 🧠 Running orchestrator pipeline...")
     result = process_documents(texts, generate_pdfs=True, output_dir=output_dir)
+    print(f"[{claimId}] 🧾 Orchestrator completed. Keys in result: {list(result.keys())}")
+
 
     # Final update
+    print(f"[{claimId}] 🟢 Finalizing claim — storing result JSON into DB")
     update_claim(claimId, stage="done", status="completed", resultJson=json.dumps(result))
+
+    print(f"[{claimId}] 📡 WS -> Completed stage broadcast sent to ALL")
     await wsmanager.broadcast_all({"claimId": claimId, "status": "completed"})
+
+    print(f"[{claimId}] 📡 WS -> Completed stage broadcast sent to CLAIM channel")
     await wsmanager.broadcast_claim(claimId, {"stage": "done", "message": "Completed", "result": result})
+
+    print(f"[{claimId}] 🎉 Pipeline completed SUCCESSFULLY")
+
 
 
 # ──────────────────────────────────────────────
@@ -110,6 +135,7 @@ async def create_claim(
     policyName: str = Form(...),
     files: List[UploadFile] = File(...)
 ):
+    print("Received claim:", name, insuranceId, policyName, len(files), "files")
     claimId = str(uuid.uuid4())[:8]
 
     save_claim(claimId, name, insuranceId, policyName, status="pending")
@@ -130,6 +156,15 @@ async def create_claim(
     asyncio.create_task(run_pipeline(claimId, filepaths, output_dir))
 
     return {"claimId": claimId, "message": "Claim submitted"}
+
+@app.get("/claims/{claimId}/pdf/{filename}")
+def download_pdf(claimId: str, filename: str):
+    pdf_path = f"{BASE_OUTPUT}/{claimId}/{filename}"
+
+    if not os.path.exists(pdf_path):
+        raise HTTPException(404, "PDF not found")
+
+    return FileResponse(pdf_path, media_type="application/pdf")
 
 
 # ──────────────────────────────────────────────
@@ -158,9 +193,13 @@ def list_claims():
 @app.get("/claims/{id}")
 def claim_details(id):
     r = get_claim(id)
+    print("RAW DB RESULT:", r)
     if not r:
         raise HTTPException(404, "Not found")
-
+    
+    result_raw = json.loads(r[8]) if r[8] else None
+    normalized = normalize_result(id, result_raw)
+    
     return {
         "id": r[0],
         "name": r[1],
@@ -169,9 +208,25 @@ def claim_details(id):
         "status": r[4],
         "currentStage": r[5],
         "createdAt": r[6],
-        "result": json.loads(r[7]) if r[7] else None
+        "result": normalized
     }
 
+def normalize_result(claimId, result):
+    if not result:
+        return {}
+
+    # Deep copy safe
+    output = dict(result)
+
+    # Convert generated_pdfs local paths → URLs
+    if "generated_pdfs" in output:
+        new_pdfs = {}
+        for key, path in output["generated_pdfs"].items():
+            filename = os.path.basename(path)
+            new_pdfs[key] = f"http://localhost:8000/claims/{claimId}/pdf/{quote(filename)}"
+        output["generated_pdfs"] = new_pdfs
+
+    return output
 
 # ──────────────────────────────────────────────
 #       WEBSOCKETS: /ws/claims and /ws/claims/{id}

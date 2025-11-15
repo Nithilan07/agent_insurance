@@ -629,7 +629,7 @@ export default function ClaimDetail() {
                           href={`${
                             url.startsWith("http")
                               ? url
-                              : `http://localhost:8000${url}`
+                              : `https://questionnaire-astrology-reasoning-dramatically.trycloudflare.com${url}`
                           }`}
                           target="_blank"
                           rel="noopener noreferrer"

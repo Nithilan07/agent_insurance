@@ -1,4 +1,4 @@
-const WS_ROOT = "ws://localhost:8000";
+const WS_ROOT = "https://questionnaire-astrology-reasoning-dramatically.trycloudflare.com";
 
 function createReconnectWebSocket(url, onMessage) {
     let ws = new WebSocket(url);

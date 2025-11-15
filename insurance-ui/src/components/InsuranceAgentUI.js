@@ -41,7 +41,7 @@ export default function InsuranceAgentUI() {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    
+
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const droppedFiles = Array.from(e.dataTransfer.files);
       setFiles(droppedFiles);
@@ -65,16 +65,16 @@ export default function InsuranceAgentUI() {
     formData.append("generate_pdfs", "true");
 
     try {
-      const res = await fetch("http://localhost:8000/process", {
+      const res = await fetch("https://questionnaire-astrology-reasoning-dramatically.trycloudflare.com/process", {
         method: "POST",
         body: formData,
       });
-      
+
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.detail || "Something went wrong");
       }
-      
+
       const data = await res.json();
       setResult(data);
     } catch (err) {
@@ -208,7 +208,7 @@ export default function InsuranceAgentUI() {
                   </div>
                   <h2 className="section-title">Claim Summary</h2>
                 </div>
-                
+
                 <div className="summary-grid">
                   {result.report.summary.patient_name && (
                     <div className="summary-item">
@@ -260,13 +260,12 @@ export default function InsuranceAgentUI() {
             {result.report && result.report.verdict && (
               <div className="card">
                 <div className="section-header">
-                  <div className={`section-icon ${
-                    result.report.verdict === "Eligible" 
-                      ? "section-icon-green" 
-                      : result.report.verdict.includes("Rejected") 
-                        ? "section-icon-red" 
-                        : "section-icon-orange"
-                  }`}>
+                  <div className={`section-icon ${result.report.verdict === "Eligible"
+                    ? "section-icon-green"
+                    : result.report.verdict.includes("Rejected")
+                      ? "section-icon-red"
+                      : "section-icon-orange"
+                    }`}>
                     {result.report.verdict === "Eligible" ? (
                       <CheckCircle className="section-icon-svg" />
                     ) : (
@@ -275,7 +274,7 @@ export default function InsuranceAgentUI() {
                   </div>
                   <h2 className="section-title">Claim Status</h2>
                 </div>
-                
+
                 <div className={`verdict-box verdict-${result.report.verdict === "Eligible" ? "eligible" : "review"}`}>
                   <div className="verdict-title">{result.report.verdict}</div>
                   {result.report.human_verdict && (
@@ -294,7 +293,7 @@ export default function InsuranceAgentUI() {
                   </div>
                   <h2 className="section-title">Financial Summary</h2>
                 </div>
-                
+
                 <div className="financial-grid">
                   {result.report.financial_summary.total_bill_amount && (
                     <div className="financial-item">
@@ -349,7 +348,7 @@ export default function InsuranceAgentUI() {
                   </div>
                   <h2 className="section-title">Coverage Breakdown</h2>
                 </div>
-                
+
                 <div className="breakdown-table">
                   <div className="breakdown-header">
                     <div className="breakdown-col">Category</div>
@@ -385,7 +384,7 @@ export default function InsuranceAgentUI() {
                 </div>
                 <h2 className="section-title">Missing Documents</h2>
               </div>
-              
+
               {result.missing_documents && result.missing_documents.length > 0 ? (
                 <div>
                   <div className="doc-list">
@@ -426,7 +425,7 @@ export default function InsuranceAgentUI() {
                   </div>
                   <h2 className="section-title">Important Notes</h2>
                 </div>
-                
+
                 {result.report.reasons && result.report.reasons.length > 0 && (
                   <div className="notes-section">
                     <h4 className="notes-title">Reasons:</h4>
@@ -437,7 +436,7 @@ export default function InsuranceAgentUI() {
                     </ul>
                   </div>
                 )}
-                
+
                 {result.report.recommended_actions && result.report.recommended_actions.length > 0 && (
                   <div className="notes-section">
                     <h4 className="notes-title">Recommended Actions:</h4>
@@ -460,7 +459,7 @@ export default function InsuranceAgentUI() {
                   </div>
                   <h2 className="section-title">Uploaded Documents</h2>
                 </div>
-                
+
                 <div className="classified-list">
                   {Object.entries(result.classified_documents).map(([filename, data]) => (
                     <div key={filename} className="classified-item">
@@ -493,12 +492,12 @@ export default function InsuranceAgentUI() {
                   </div>
                   <h2 className="section-title">Generated Reports</h2>
                 </div>
-                
+
                 <div className="pdf-list">
                   {Object.entries(result.generated_pdfs).map(([name, url]) => (
                     <a
                       key={name}
-                      href={`http://localhost:8000${url}`}
+                      href={`https://questionnaire-astrology-reasoning-dramatically.trycloudflare.com${url}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="pdf-link"
@@ -516,7 +515,7 @@ export default function InsuranceAgentUI() {
           </div>
         )}
       </div>
-      
+
       <style jsx>{`
         .insurance-container {
           min-height: 100vh;

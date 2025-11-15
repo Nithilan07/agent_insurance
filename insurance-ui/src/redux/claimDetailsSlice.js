@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 
-const API_ROOT = "http://localhost:8000";
+const API_ROOT = "https://questionnaire-astrology-reasoning-dramatically.trycloudflare.com";
 
 export const fetchClaimById = createAsyncThunk("claim/fetchById", async (id) => {
     const res = await fetch(`${API_ROOT}/claims/${id}`);
