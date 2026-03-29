@@ -4,7 +4,8 @@ FULL FASTAPI BACKEND FOR INSURANCE PIPELINE
 -------------------------------------------
 ✓ Accepts PDF/Image uploads
 ✓ Runs OCR using agents/ocr_agent.py
-✓ Runs orchestration pipeline
+✓ Passes both TEXT and FILE BYTES to orchestrator
+✓ Runs orchestration pipeline with document quality check
 ✓ Generates Claim Report + Pre-Filled Claim Form PDFs
 ✓ Provides download links for generated PDFs
 """
@@ -53,8 +54,9 @@ async def process_insurance_documents(
     Upload multiple PDF/Image files.
     Backend will:
       - save them
-      - run OCR
-      - run all agents (classification, extraction, coverage, missing-docs)
+      - run OCR to extract text
+      - pass BOTH text AND file bytes to orchestrator
+      - run all agents (quality check, classification, extraction, coverage, missing-docs)
       - generate PDFs if requested
       - return JSON + PDF download links
     """
@@ -68,35 +70,59 @@ async def process_insurance_documents(
 
         saved_files = []
 
-        # Save files to disk
+        # Save files to disk and keep bytes in memory
+        file_data_map = {}
+        
         for f in files:
+            # Read file bytes
+            file_bytes = await f.read()
+            
+            # Save to disk
             filepath = os.path.join(upload_dir, f.filename)
             with open(filepath, "wb") as buffer:
-                buffer.write(await f.read())
+                buffer.write(file_bytes)
+            
             saved_files.append(filepath)
-
-        # Run OCR on each
-        doc_texts: Dict[str, str] = {}
-        ocr_debug = {}
-
-        for path in saved_files:
-            ocr_res = extract_text(path)
-
-            filename = ocr_res.get("filename", os.path.basename(path))
-            text = ocr_res.get("text", "")
-            err = ocr_res.get("error")
-
-            doc_texts[filename] = text
-            ocr_debug[filename] = {
-                "sample": text[:200],
-                "error": err
+            
+            # Store bytes for later use
+            file_data_map[f.filename] = {
+                'bytes': file_bytes,
+                'filepath': filepath
             }
 
-        # Run entire pipeline (orchestrator)
+        # Run OCR on each file
+        doc_data: Dict[str, Dict] = {}
+        ocr_debug = {}
+
+        for filename, file_info in file_data_map.items():
+            filepath = file_info['filepath']
+            
+            # Run OCR
+            ocr_res = extract_text(filepath)
+            
+            text = ocr_res.get("text", "")
+            err = ocr_res.get("error")
+            
+            # Store BOTH text and bytes for orchestrator
+            doc_data[filename] = {
+                'text': text,
+                'bytes': file_info['bytes'],
+                'filename': filename
+            }
+            
+            # Debug info for response
+            ocr_debug[filename] = {
+                "sample": text[:200],
+                "error": err,
+                "file_size": len(file_info['bytes'])
+            }
+
+        # Run entire pipeline (orchestrator) with BOTH text and bytes
         result = process_documents(
-            doc_texts,
+            doc_data,  # Now contains text + bytes + filename
             generate_pdfs=generate_pdfs,
-            output_dir=output_dir
+            output_dir=output_dir,
+            skip_quality_check=False  # Enable quality check
         )
 
         # Build PDF download URLs
@@ -105,6 +131,10 @@ async def process_insurance_documents(
             if path and os.path.exists(path):
                 pdf_urls[key] = f"/download/{req_id}/{os.path.basename(path)}"
 
+        # Extract quality results
+        quality_results = result.get("quality_results", {})
+        rejected_docs = result.get("rejected_documents", {})
+        
         # Extract missing documents list from the structured response
         missing_docs_result = result.get("missing_documents", {})
         missing_docs_list = missing_docs_result.get("missing_docs", []) if isinstance(missing_docs_result, dict) else (missing_docs_result if isinstance(missing_docs_result, list) else [])
@@ -113,6 +143,8 @@ async def process_insurance_documents(
         return JSONResponse({
             "request_id": req_id,
             "ocr_debug": ocr_debug,
+            "quality_results": quality_results,  # Quality check results for each file
+            "rejected_documents": rejected_docs,  # Documents that failed quality check
             "classified_documents": result.get("classified"),
             "missing_documents": missing_docs_list,  # Return as array for UI compatibility
             "missing_documents_full": missing_docs_result,  # Also include full structured data
@@ -123,7 +155,14 @@ async def process_insurance_documents(
         })
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+        )
 
 
 # -----------------------------------------------------------
@@ -164,8 +203,70 @@ def cleanup(req_id: str):
 
 
 # -----------------------------------------------------------
+# ROUTE: CHECK QUALITY OF SINGLE DOCUMENT
+# -----------------------------------------------------------
+@app.post("/check-quality")
+async def check_document_quality(file: UploadFile = File(...)):
+    """
+    Quick quality check endpoint for a single document.
+    Useful for pre-upload validation.
+    """
+    try:
+        from agents.document_clarity import assess_quality_from_bytes
+        
+        file_bytes = await file.read()
+        
+        result = assess_quality_from_bytes(
+            file_bytes,
+            file.filename,
+            config={
+                'clarity_threshold': 0.75,
+                'alignment_weight': 0.25,
+                'clarity_weight': 0.40,
+                'readability_weight': 0.35,
+                'ai_penalty_weight': 0.10
+            }
+        )
+        
+        return JSONResponse(result)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -----------------------------------------------------------
 # HEALTH CHECK
 # -----------------------------------------------------------
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+# -----------------------------------------------------------
+# STARTUP MESSAGE
+# -----------------------------------------------------------
+@app.on_event("startup")
+async def startup_event():
+    print("=" * 80)
+    print("🏥 Health Insurance AI Agent Backend Started")
+    print("=" * 80)
+    print("\nEndpoints:")
+    print("  POST /process          - Upload and process insurance documents")
+    print("  POST /check-quality    - Check quality of a single document")
+    print("  GET  /download/{req_id}/{filename} - Download generated PDFs")
+    print("  POST /cleanup/{req_id} - Clean up uploaded/generated files")
+    print("  GET  /health           - Health check")
+    print("\nFeatures:")
+    print("  ✓ OCR text extraction")
+    print("  ✓ Document quality assessment (mandatory)")
+    print("  ✓ Document classification")
+    print("  ✓ Bill extraction")
+    print("  ✓ Coverage calculation")
+    print("  ✓ Missing documents detection")
+    print("  ✓ Report generation")
+    print("=" * 80 + "\n")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

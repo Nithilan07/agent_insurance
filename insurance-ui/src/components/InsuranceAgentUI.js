@@ -50,11 +50,13 @@ export default function InsuranceAgentUI() {
       formData.append("files", file);
     }
     formData.append("generate_pdfs", "true");
-
+    
     try {
+      const controller = new AbortController();
       const res = await fetch("http://localhost:8000/process", {
         method: "POST",
         body: formData,
+        signal: controller.signal,
       });
       
       if (!res.ok) {
